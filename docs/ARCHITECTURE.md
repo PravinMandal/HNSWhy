@@ -6,8 +6,8 @@
 > `WORKFLOW.md`.
 >
 > This file explains the shape and the "why", in plain language. It is not a code
-> listing. Session 1 has built the target skeleton; algorithm files arrive with their
-> components.
+> listing. Sessions 1–2 have built the target skeleton and the distance kernel;
+> algorithm files arrive with their components.
 
 ---
 
@@ -516,6 +516,8 @@ src/bench/
   main.cpp
   cli.cpp
   runner.cpp
+  synthetic.cpp        # S2 timing smoke; the real runner arrives at S18
+  synthetic.h
   rss.cpp
   export_run.cpp
 tests/

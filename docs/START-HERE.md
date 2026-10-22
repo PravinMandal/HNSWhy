@@ -4,8 +4,8 @@
 > `DECISIONS.md`; the architecture is in `ARCHITECTURE.md`; the schedule is in
 > `WORKFLOW.md`; the hard algorithm is in `HNSW-SPEC.md`.
 >
-> **Status: Session 1 complete — build skeleton and green smoke tests.** Next:
-> Session 2, the squared-L2 distance function. Planning docs live in `docs/`.
+> **Status: Session 2 complete — build skeleton, squared L2, and the first timing
+> smoke test.** Next: Session 3, the SIFT loader. Planning docs live in `docs/`.
 
 ---
 
@@ -203,9 +203,9 @@ proof.
 
 ---
 
-## 9. Where we are after Session 1
+## 9. Where we are after Session 2
 
-**Session 1 is complete.** The build skeleton exists:
+**Sessions 1–2 are complete.** The build skeleton and distance kernel exist:
 
 ```bash
 cmake --preset release
@@ -214,24 +214,26 @@ ctest --preset release
 
 # prints build type, compiler, and the flags that compiled the binary
 ./build/release/hns_bench --version
+
+# synthetic exact-scan timing; a smoke test, not a benchmark result
+./build/release/hns_bench --synthetic-bench
 ```
 
 Current state:
 
-- `hns_core` — version/library skeleton; no algorithms yet.
+- `hns_core` — version and squared-L2 distance; no graph yet.
 - `hns_io` — build metadata; no dataset readers yet.
-- `hns_bench` — `--version` only; no benchmark yet.
-- `hns_tests` — three passing smoke tests.
+- `hns_bench` — `--version` and `--synthetic-bench`; no SIFT benchmark yet.
+- `hns_tests` — eight passing tests: five distance, three smoke.
 - planning and design docs — in `docs/`.
 
-Next: **Session 2**, the squared-L2 distance function and its first timing test.
-Before writing code, read `DECISIONS.md` D1–D14 and `ARCHITECTURE.md` §0–§3.
+Next: **Session 3**, the `fvecs`/`ivecs` reader and the `siftsmall` load check.
 
-The three questions to be able to answer before S2:
+The three questions to be able to answer before S3:
 
-1. Why is brute force the answer key?
-2. Why does the 100k gate need our own GT, not the shipped 1M key?
-3. Why does the vector store own the vectors while the index borrows them?
+1. Why does an `.fvecs` record start with a dimension `int`?
+2. Why is self-distance exactly `0` a good loader check?
+3. Why is `siftsmall` safe to use with its shipped ground truth, while a SIFT prefix is not?
 
 ---
 

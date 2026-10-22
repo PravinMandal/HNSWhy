@@ -12,7 +12,7 @@ mark it `partial` and carry the checkpoint forward; do not silently skip it.
 | # | date | hours | LOC by me | what works now | what is broken | checkpoint (evidence) |
 |---|---|---|---|---|---|---|
 | 1 | 2026-10-22 | — | 0 | CMake presets; `hns_core`/`hns_io`/`hns_bench`/`hns_tests`; `--version` prints Release + flags; 3 smoke tests green | No distance, loader, search, or benchmark yet (by design) | `cmake --build --preset release`; `ctest --preset release`; `./build/release/hns_bench --version` |
-| 2 | | | | | | 3 hand-checked distances; synthetic BF p50/p95 stable |
+| 2 | 2026-10-22 | — | 0 | Squared L2 + 5 hand-checked/edge tests; synthetic k=1 scan prints p50/p95 | No SIFT loader, graph, or top-k BF yet (by design) | `ctest --preset release -R SquaredL2` (5 pass); `./build/release/hns_bench --synthetic-bench` (p50/p95 nonzero and stable across 3 trials) |
 | 3 | | | | | | `siftsmall` loads 10,000 × 128; self-distance 0 |
 | 4 | | | | | | `siftsmall` BF vs shipped GT: tie-aware R@10 = 1.0000 |
 | 5 | | | | | | `sift100k` BF GT fixture (IDs + distances + query IDs + sha256); self-contained `sift10k` CI bundle; BF vs own GT = 1.0000; float64 sample agrees |

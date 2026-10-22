@@ -4,7 +4,7 @@
 > Read `START-HERE.md` first. `DECISIONS.md` is the lock. `ARCHITECTURE.md` explains
 > the shape. `HNSW-SPEC.md` is the hard algorithm.
 >
-> Status: Session 1 complete; Session 2 is next.
+> Status: Session 2 complete; Session 3 is next.
 
 ---
 

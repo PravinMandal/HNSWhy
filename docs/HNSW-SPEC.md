@@ -49,7 +49,8 @@ range search, or quantization. Those are stretch items in `plan.md` §12.
 d(a, b) = sum_i (a[i] - b[i])^2
 ```
 
-No square root: it is monotonic and cheaper. The metric is fixed per index.
+No square root: it is monotonic and cheaper. The metric is fixed per index. The v1
+data contract excludes NaN/Inf; the hot path does not guard them.
 
 **IDs.** v1 IDs are slot indices (`uint32_t`) into the vector store. If external IDs
 are ever needed, add a separate `external_id` array; do not put a map in the hot

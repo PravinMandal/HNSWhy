@@ -5,7 +5,7 @@
 > `HNSW-SPEC.md`; the 28-session plan is `WORKFLOW.md`. If this file conflicts with
 > `DECISIONS.md`, `DECISIONS.md` wins.
 >
-> Status: Session 1 complete; Session 2 is next.
+> Status: Session 2 complete; Session 3 is next.
 > Last updated: 2026-10-22.
 
 ---

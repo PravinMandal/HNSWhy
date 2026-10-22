@@ -23,6 +23,7 @@ configure_file(
 )
 
 add_library(hns_core STATIC
+    src/core/distance.cpp
     src/core/version.cpp
 )
 target_include_directories(hns_core PUBLIC
@@ -44,10 +45,12 @@ target_include_directories(hns_io PUBLIC
 
 add_executable(hns_bench
     src/bench/main.cpp
+    src/bench/synthetic.cpp
 )
 target_link_libraries(hns_bench PRIVATE hns_io)
 
 add_executable(hns_tests
+    tests/test_distance.cpp
     tests/test_smoke.cpp
 )
 target_link_libraries(hns_tests PRIVATE hns_io GTest::gtest_main)

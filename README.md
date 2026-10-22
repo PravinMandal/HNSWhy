@@ -2,10 +2,11 @@
 
 A from-scratch C++20 HNSW vector index, measured against exact search on SIFT.
 
-> **Status: in development.** Session 1 is complete: the build skeleton and smoke
-> tests are in place. No benchmark numbers have been measured yet. The results table
-> below stays `TBD` until the S22 release run; every published number will come from
-> a frozen, reproducible artifact with a commit and a command.
+> **Status: in development.** Sessions 1–2 are complete: build skeleton, squared-L2
+> distance kernel, tests, and a synthetic timing smoke test. No benchmark numbers
+> have been measured yet. The results table below stays `TBD` until the S22 release
+> run; every published number will come from a frozen, reproducible artifact with a
+> commit and a command.
 
 ---
 
@@ -83,6 +84,9 @@ ctest --preset release
 
 # build type, compiler, and flags
 ./build/release/hns_bench --version
+
+# synthetic timing smoke test (not a benchmark result)
+./build/release/hns_bench --synthetic-bench
 ```
 
 ## Benchmark (example; the runner arrives at S18)
