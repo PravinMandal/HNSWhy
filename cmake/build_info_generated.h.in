@@ -1,0 +1,10 @@
+#pragma once
+
+namespace hnswhy::detail {
+
+inline constexpr const char* kBuildType = "@CMAKE_BUILD_TYPE@";
+inline constexpr const char* kCompilerId = "@CMAKE_CXX_COMPILER_ID@";
+inline constexpr const char* kCompilerVersion = "@CMAKE_CXX_COMPILER_VERSION@";
+inline constexpr const char* kCxxFlags = "@HNSWHY_EFFECTIVE_CXX_FLAGS@";
+
+}  // namespace hnswhy::detail
