@@ -1,627 +1,375 @@
-# HNSWhy — SHOWCASE
+# VectorForge — Product & Showcase
 
-> The core binary proves the claim. This layer makes the proof legible.
+> The product UI is the showcase. The old three-page static site is retired.
 >
-> Read `ARCHITECTURE.md` §1 and §8 first. This file is the design for `web/` and the
-> small exporter that feeds it. The showcase starts at S23, after the S22 release run.
-> It adds no index logic.
+> Read `ARCHITECTURE.md` §3 and §6 first. This file is the design for the four product
+> tabs and the demo. It adds no index logic.
+>
+> **The one rule:** the UI never computes a benchmark number. It renders `bench.json`
+> through `/api/benchmark`. If a number is not in the report, it does not appear on a
+> chart, a table, or a slide.
 
 ---
 
-## 0. The one rule
-
-> **The showcase never computes a benchmark number. It renders artifacts produced by
-> `hns_bench`.**
-
-If a number appears on the site, it came from a JSON file written by the C++ binary,
-and that file names the commit, the machine, the dataset checksum, and the exact
-command. The site has no API, no database, and no way to invent a data point.
-
-Every hero number has a `run_id`. Every chart point is a measured row. The line
-between points is a guide, not interpolation. If a value is missing, the UI says
-"not measured", not "0".
-
----
-
-## 1. Why a showcase at all
+## 0. Why the product is the showcase
 
 There are three evaluation moments:
 
 | Moment | Time | What they look at | What wins |
 |---|---|---|---|
-| Resume / GitHub | 5 seconds | repo name, README top | one striking number + one picture |
-| Phone screen | 15 minutes | shared screen | a 60-second tour that shows the mechanism |
+| Resume / GitHub | 5 seconds | repo name, README top | one clear product sentence + one real number |
+| Phone screen | 15 minutes | shared screen | a 60-second tour that actually works |
 | Onsite | 20 minutes | whiteboard | your head, not your laptop |
 
-The terminal table proves the result. It does not show the mechanism. HNSW is
-invisible: a query touches a few hundred of 100,000 vectors, and the interesting part
-is *which* ones and *why*. A graph and a replay make that visible in seconds.
+A static trace page can show one query. A working product shows the whole loop:
+upload, retrieve, answer, cite, delete, restart. The benchmark tab shows the engine is
+real. That is a stronger story than a separate showcase site, and it is one less
+frontend to build.
 
-That is the interview asset. Not a search box.
+The product is not a generic SaaS dashboard. It is a technical tool with four jobs:
+
+1. **Documents** — get text into the index.
+2. **Ask** — retrieve and answer with evidence.
+3. **Map** — show that the embeddings are real.
+4. **Benchmark** — show that the engine is measured.
 
 ---
 
-## 2. Why not a live backend
+## 1. Site map
 
-| Constraint | Reality |
+```text
+/            Documents tab (default)
+/ask         Ask tab
+/map         Map tab
+/benchmark   Benchmark tab
+```
+
+The app is a single-page React app; the tabs can be client-side routes or a tab
+switcher. The URL should be shareable enough to open a tab, but there is no auth and no
+per-user state in v1.
+
+No separate `/trace`, `/prune`, `/about`, or `/playground` routes. The prune
+explanation is a panel in the Benchmark tab or a README section. About/fine print is a
+footer.
+
+---
+
+## 2. Documents tab
+
+**Job:** make it obvious what is indexed and let the user remove it.
+
+### Layout
+
+- Header: "Documents" + a primary "Add document" button.
+- Upload area: drag-and-drop `.txt`/`.md` or paste text; title field; "Index" button.
+- Status line: one "Indexing…" state while the request runs; on success show the chunk
+  count returned by the API. On failure, the error message names the stage that failed
+  (validation, embedding, or database). Do not fake a multi-stage progress bar.
+- Document list: title, chunk count, created time, delete action. Delete asks for
+  confirmation; the row is removed permanently (the in-memory graph marks it deleted).
+- Empty state: "No documents yet. Upload a `.txt` or `.md`, or paste text."
+
+### Behavior
+
+- Upload accepts `.txt` and `.md` only in v1. PDF is deferred; do not pretend to
+  support it.
+- Text limit: 2 MB per upload.
+- On submit: POST `/api/documents`; show progress; on success, refresh the list.
+- Show the chunk count returned by the API; do not estimate it from a word count in the
+  browser. Chunk size is a backend constant.
+- Delete: confirmation dialog; DELETE `/api/documents/{id}`; remove from list; the
+  backend deletes the SQLite document row (cascade removes chunks and embeddings) and
+  calls `HNSW::remove` for the affected slots.
+- If Ollama is down: show a clear message with the `ollama serve` command; do not
+  insert a fake document.
+- If embedding fails halfway: no partial document. The backend transaction rolls back.
+
+### What not to show
+
+- A fake "vector count" that is not from the API.
+- A "demo document" that was never embedded.
+- A 3D preview of the document. The Map tab is the visual.
+
+---
+
+## 3. Ask tab
+
+**Job:** answer a question from the uploaded documents, with evidence.
+
+### Layout
+
+- Question input; "Ask" button; example questions if the corpus is known.
+- Answer panel: the LLM answer, with numbered citations `[1]`, `[2]`.
+- Sources panel: each cited chunk with document title, chunk text, distance, and chunk
+  ID. Clicking a citation scrolls to the source.
+- Retrieved panel (collapsible): all top-k chunks, including ones the answer did not
+  cite, with distances.
+- Timing line: embed ms, search ms, generate ms, total ms.
+
+### Behavior
+
+- POST `/api/ask` `{ question, k }`.
+- Backend embeds, searches, retrieves, prompts, generates, returns
+  `{ answer, sources, retrieved, timings }`.
+- If the index has no live chunks: "I could not find this in the uploaded documents."
+  No LLM call. Do not answer from general knowledge.
+- If the index has chunks, retrieve and prompt. If the model refuses because the sources
+  do not answer the question, show that refusal with the retrieved sources. A grounded
+  refusal is a valid result, not an error.
+- Do not apply a hard distance cutoff in v1; it is embedding-model dependent and
+  uncalibrated.
+- If Ollama is down: `503` with a fixable message.
+- If the model returns an answer with no citations, show a warning: "The model did not
+  cite a source; treat this as ungrounded." Do not hide it.
+- The answer should be rendered as Markdown if the model returns Markdown, but
+  sanitize it. No raw HTML injection.
+- The question and answer are not persisted in v1. That is a product limitation, not a
+  bug to hide.
+
+### Honesty rules
+
+- The citation is the evidence. A fluent answer without a citation is not a product
+  success.
+- Do not silently retry with a different prompt and present only the good answer.
+- Do not use a hardcoded demo answer when the backend fails.
+- Do not call a general-purpose model without the retrieved context and label it RAG.
+
+---
+
+## 4. Map tab
+
+**Job:** show that the embeddings are real and that retrieval has geometry.
+
+### Layout
+
+- 2D scatter plot of sampled chunks; points colored by document (or one accent color
+  if there are too many documents).
+- Query marker and retrieved-hit markers, with labels.
+- Legend: point = chunk, ring = query, filled = retrieved.
+- Caption: "2D PCA projection of real embeddings; distances are approximate. Sample:
+  N of M chunks."
+- Optional document filter; optional "show only hits" toggle.
+
+### Behavior
+
+- GET `/api/map?limit=1000` returns sampled chunk vectors + metadata.
+- Frontend computes 2D PCA in `lib/pca.js`; no server-side projection in v1.
+- If the corpus is small, show all points; if large, sample deterministically (stable
+  seed) so the map does not jump between reloads.
+- Highlight the query and the current Ask tab's retrieved chunks if available.
+- If there are no documents, show an empty state; do not draw a fake cloud.
+- The map is not a benchmark. Do not label clusters as "good" or "bad" retrieval.
+
+### Why 2D and not 3D
+
+3D adds occlusion, camera controls, and a dependency for a screenshot that is not more
+truthful. A 2D projection already shows the only thing the product needs: the points
+come from real embeddings, and the query lands near its retrieved chunks.
+
+---
+
+## 5. Benchmark tab
+
+**Job:** show the engine's measured quality without turning the product into a
+benchmark runner.
+
+### Layout
+
+- Header: dataset, `N`, `dim`, `k`, query count, build/query parameters.
+- Hero row: `R@10`, QPS, p95, build time, RSS, speedup.
+- Recall–QPS curve: one point per measured `efSearch` value from the same build; hover
+  shows `efSearch` and metrics; run metadata is in the header. The pre-registered SLO
+  point is marked.
+- Table: all measured points, including dominated ones; no interpolation.
+- Command block: the exact `hns_bench` command.
+- Metadata: commit, dirty flag, CPU, RAM, compiler, flags, thread count, dataset
+  hashes.
+- "Why diversity?" panel: the two-cluster prune explanation, with a link to
+  `HNSW-SPEC.md` §7.1–§7.2. This replaces the old `/prune` page.
+- Ablation: not in v1. The two-cluster test is the v1 evidence for the heuristic; an
+  optional nearest-only build is a later experiment, not a panel in this tab.
+
+### Behavior
+
+- GET `/api/benchmark` reads `docs/results/bench.json` (or the configured report path)
+  and returns it.
+- If no report exists: show "No benchmark report. Run `scripts/run_bench.sh` to
+  produce one." Do not invent a chart.
+- If the report is from a different commit than the running server, show a warning.
+- The tab never runs a 100k build in the request.
+- The UI may format numbers, but it must not recompute recall or speedup from raw
+  query data; those come from the report.
+
+### What not to show
+
+- A "500×" headline that is not in `bench.json`.
+- A curve with interpolated points.
+- A 1M row that was not measured.
+- A "production-grade" badge. Say "portfolio v1" if a label is needed.
+
+---
+
+## 6. API and data contract
+
+The product API is defined in `ARCHITECTURE.md` §7. The UI uses only these endpoints:
+
+| UI action | Endpoint |
 |---|---|
-| RAM | 100k ≈ 80 MB; 1M ≈ 700 MB |
-| Free tiers | typically 512 MB, and they sleep |
-| Cold start | 10–30 s; the interviewer closes the tab |
-| Cost | ~$7–15/month for a box that stays warm |
-| Fragility | a link that is down during the interview is worse than no link |
-| Credibility | a cloud CPU produces different QPS/latency than the machine in the README |
+| health/status | `GET /api/health`, `GET /api/status` |
+| upload/paste | `POST /api/documents` |
+| list documents | `GET /api/documents` |
+| delete document | `DELETE /api/documents/{id}` |
+| ask | `POST /api/ask` |
+| map | `GET /api/map?limit=1000` |
+| benchmark | `GET /api/benchmark` |
 
-The benchmark must run on the machine named in the manifest, because the README claims
-that CPU and RAM. A cloud box would produce a second set of numbers, and then the
-site and the README would disagree. Static artifacts keep one source of truth.
+The benchmark payload is `bench.json` from `plan.md` §8. The map payload is sampled
+vectors, not precomputed coordinates; PCA is frontend code.
 
-If you want live search later, compile the same core to WebAssembly and ship
-`siftsmall` (10,000 vectors, ~5 MB). That is a stretch item, clearly labelled as a
-10k demo, not the 100k native benchmark. It is not in v1.
-
----
-
-## 3. The site map: three pages
-
-Each page answers one question. About/fine print is a footer, not a route.
-
-```text
-/          The claim: headline numbers, recall–QPS curve, table, method, reproduce
-/trace     The search: one query's graph + replay + results vs ground truth
-/prune     The hard part: why nearest-only pruning fails
-```
-
-No `/graph`: the trace page already contains the query-centric graph. No `/about`:
-the footer has the commit, machine, flags, dataset checksum, limitations, and
-commands. No `/playground` in v1.
-
-### `/` — The claim
-
-- Hero numbers from the frozen release row: `R@10` with CI, `QPS`, `p95`, speedup at
-  the SLO point, average distance computations.
-- One sentence: "R% of the true top-10 while touching V of 100,000 vectors."
-- The recall–QPS curve. One point per measured run. Hover shows `run_id`, the command,
-  and the CSV row.
-- A filter for `M`, `efConstruction`, `efSearch` that **selects among measured
-  points**; it never interpolates.
-- A sortable table of all runs, including dominated points.
-- A "method" block: dataset, query count, GT source, threads, hardware, flags,
-  build time, RSS, limitations.
-- A "reproduce" footer: commit SHA, `dirty=false`, dataset/query/GT SHA-256, exact
-  command, link to the CSV.
-
-### `/trace` — The search (the centerpiece)
-
-One page, two linked views:
-
-1. **Graph**: a query-centric subgraph — the union of nodes the selected query
-   visited, plus their layer-0 neighbours, capped at 500 nodes. Layer tabs
-   `L2 / L1 / L0`; hover shows vector ID, level, degree, distance to query; toggle
-   "only visited nodes".
-2. **Replay**: play / pause / step / speed; a scrubber over the search events. The
-   node set grows as the search descends. The candidate beam is highlighted. A side
-   panel shows current layer/node, best distance, candidates in the beam, visited
-   count, and distance computations.
-
-At the end: HNSW top-10 next to the ground-truth top-10. Matches green, misses red,
-plus each true neighbour's rank in the HNSW result. The counter is the thesis:
-distance computations vs `100,000`.
-
-The graph and trace are one JSON file (`queries/q0042.json`) so they cannot drift.
-
-### `/prune` — The hard part
-
-The single hardest idea, made visual.
-
-- A synthetic 2D dataset: two separated clusters, ~200 points each. Not SIFT, not
-  128-D; 2D is the point.
-- Two graphs side by side: "keep nearest M" vs "keep diverse M" (Algorithm 4).
-- Animate a BFS from the entry. In the nearest-only graph, the second cluster is
-  unreachable; in the heuristic graph, a bridge exists.
-- Show **reachability** (`reachable / total`) for both. If you also measure cluster
-  recall, label it separately; do not call reachability "recall".
-- An inset explains the predicate with actual squared distances: candidate `B` is
-  rejected because it is closer to selected `A` than to the node being pruned;
-  candidate `D` is kept because it is farther from `A` than from the reference. The
-  full worked example is in `HNSW-SPEC.md` §7.1.
-- The README embeds this image. It is the first picture an interviewer sees.
-
-**Important:** the old "41% → 99%" was illustrative. The site must show the measured
-fixture values, generated by the exporter, with a `run_id`/fixture id. The test
-threshold is nearest-only reachability `< 0.5` and heuristic `> 0.9`; the actual
-numbers can be different.
-
----
-
-## 4. The data contract
-
-The C++ exporter writes a small, versioned dataset:
-
-```text
-web/public/data/
-  manifest.json
-  bench.json
-  queries/
-    q0042.json          # graph + trace + result for one query
-    q0007.json
-  prune.json
-```
-
-### `manifest.json`
+Error shape is consistent:
 
 ```json
 {
-  "schema": 1,
-  "project": "HNSWhy",
-  "commit": "<sha>",
-  "dirty": false,
-  "generated_at": "<utc>",
-  "dataset": {
-    "name": "sift100k",
-    "base": 100000,
-    "dim": 128,
-    "queries": 10000,
-    "ground_truth": "bf_subset",
-    "base_sha256": "<sha>",
-    "query_ids_sha256": "<sha>",
-    "gt_sha256": "<sha>"
-  },
-  "machine": {
-    "cpu": "<model>",
-    "cores": 0,
-    "ram_gb": 0,
-    "os": "<kernel>"
-  },
-  "compiler": {
-    "name": "g++",
-    "version": "<version>",
-    "flags": "-O3 -DNDEBUG -march=native",
-    "build_type": "Release"
-  },
-  "seed": 42,
-  "artifacts": ["bench.json", "queries/q0042.json", "prune.json"]
-}
-```
-
-### `bench.json`
-
-One entry per measured run. This is the only source of the headline numbers. The
-values below are **illustrative placeholders**, not targets; the exporter writes
-measured values. Never copy these into the README.
-
-```json
-{
-  "schema": 1,
-  "runs": [
-    {
-      "run_id": "sift100k-m16-efc200-ef50",
-      "command": "<exact command>",
-      "dataset": "sift100k",
-      "n": 100000,
-      "dim": 128,
-      "k": 10,
-      "M": 16,
-      "M0": 32,
-      "ef_construction": 200,
-      "ef_search": 50,
-      "trials": 5,
-      "warmup": 100,
-      "build_seed": 42,
-      "threads": 1,
-      "gt_source": "bf_subset",
-      "dataset_sha256": "<sha>",
-      "query_ids_sha256": "<sha>",
-      "gt_sha256": "<sha>",
-      "r10": 0.0,
-      "r10_lo": 0.0,
-      "r10_hi": 0.0,
-      "r1": 0.0,
-      "r100": 0.0,
-      "id_overlap": 0.0,
-      "qps": 0.0,
-      "p50_ms": 0.0,
-      "p95_ms": 0.0,
-      "p99_ms": 0.0,
-      "trial_qps_min": 0.0,
-      "trial_qps_max": 0.0,
-      "build_s": 0.0,
-      "rss_peak_mb": 0.0,
-      "rss_steady_mb": 0.0,
-      "bytes_per_vector": 0.0,
-      "avg_distance_computations": 0.0,
-      "avg_visited": 0.0,
-      "bf_run_id": "sift100k-bf",
-      "bf_qps": 0.0,
-      "speedup": 0.0,
-      "commit": "<sha>",
-      "dirty": false,
-      "limitations": "single-thread; warm cache; local machine; 100k"
-    }
-  ]
-}
-```
-
-`speedup` is derived as `qps / bf_qps` from the same query set and the same
-kernel/flags/thread count. The site may display it, but labels it "derived". Do not
-hardcode 500×; the measured 100k ratio will be smaller than the old 1M example.
-
-### `queries/q0042.json`
-
-One file per traced query, containing graph, events, and result. Shape example only:
-the zeros are placeholders, not a real query.
-
-```json
-{
-  "schema": 1,
-  "query": {"id": 42, "gt": [0, 0, 0]},
-  "entry": 0,
-  "layer_counts": {"2": 0, "1": 0, "0": 100000},
-  "nodes": [{"id": 0, "level": 0, "degree": 0}],
-  "edges": [{"source": 0, "target": 0, "layer": 0}],
-  "steps": [
-    {
-      "layer": 0,
-      "current": 0,
-      "dist": 0.0,
-      "visited_new": [0],
-      "candidates_push": [[0, 0.0]],
-      "candidates_pop": [],
-      "results_push": [[0, 0.0]],
-      "results_pop": [],
-      "best": 0,
-      "best_dist": 0.0,
-      "distance_computations": 0
-    }
-  ],
-  "result": {
-    "ids": [0],
-    "dists": [0.0],
-    "distance_computations": 0
+  "error": {
+    "code": "OLLAMA_UNAVAILABLE",
+    "message": "Ollama is not reachable at localhost:11434. Start it with `ollama serve`."
   }
 }
 ```
 
-- Cap the subgraph at ~500 nodes: all visited nodes plus layer-0 neighbours, then a
-  small ring. Do not export 100,000 nodes.
-- `steps` are deltas. The replay reconstructs the candidate heap and result heap from
-  `candidates_push`/`candidates_pop` and `results_push`/`results_pop`. If the UI needs
-  a snapshot, emit one at layer boundaries only, never on every step.
-- IDs are original vector IDs, not internal slots.
-- Floats rounded at export (6 decimals); sorted keys/arrays; deterministic.
-
-### `prune.json`
-
-Shape example; the zeros and single point are placeholders.
-
-```json
-{
-  "schema": 1,
-  "fixture": "two_clusters_2d",
-  "points": [{"id": 0, "x": 0.0, "y": 0.0, "cluster": 0}],
-  "entry": 0,
-  "query": {"x": 0.0, "y": 0.0},
-  "variants": {
-    "nearest": {
-      "edges": [[0, 1]],
-      "reachable": [0, 1],
-      "reachability": 0.0,
-      "cluster_recall": null
-    },
-    "heuristic": {
-      "edges": [[0, 1]],
-      "reachable": [0, 1],
-      "reachability": 0.0,
-      "cluster_recall": null
-    }
-  }
-}
-```
-
-`reachability` is BFS reachable / total, not recall. If cluster recall is measured,
-it is a separate field with its own definition and query set.
-
-### Schema rules
-
-- `schema` is an integer; bump it on any breaking change.
-- `scripts/check-data.mjs` validates required fields and types before the site builds.
-  A mismatch fails CI, not the interview.
-- `dirty=true` artifacts are refused by the exporter/site build.
-- Every hero number maps to a `run_id` and a CSV row; the site has a test that checks
-  this.
-- If a field is missing, display "not measured"; do not default to 0.
+The UI should map error codes to actionable states, not dump a raw stack trace.
 
 ---
 
-## 5. The C++ side
+## 7. Frontend stack and design
 
-### 5.1 Library boundary (done at S1)
+### Stack
 
-```text
-hns_core   algorithms, no I/O, no main
-hns_io     fvecs/ivecs, CSV, JSON, manifest, checksums
-hns_bench  CLI, runner, RSS, export mode; the only main()
-hns_tests  unit/invariant/fixture tests
-hns_wasm   optional stretch; hns_core only
-```
+- Existing VectorForge React/Vite app, refactored to the four tabs in this document
+  (see `ARCHITECTURE.md` §3.1).
+- `api.js` for all HTTP calls and error normalization.
+- `lib/pca.js` for 2D PCA.
+- SVG for the benchmark curve; Canvas or SVG for the map (a few thousand points).
+- No Next.js, no server-side rendering, no charting SaaS.
+- No fake embedding function. The old `textToEmbedding` with `Math.random()` jitter is
+  deleted, not hidden behind a flag.
 
-The fvecs reader lives in `hns_io`, not `hns_core`. It loads the file into a
-`VectorStore` and hands the core spans. The core never sees a path.
-
-### 5.2 Exporter CLI
-
-```bash
-./build/bench \
-  --dataset sift100k \
-  --base data/sift/sift_base.fvecs --limit 100000 \
-  --query data/sift/sift_query.fvecs \
-  --gt tests/fixtures/sift100k/gt.ivecs \
-  --gt-dist tests/fixtures/sift100k/gt_dist.fvecs \
-  --M 16 --efConstruction 200 --efSearch 50 --k 10 \
-  --trials 5 --out results.csv \
-  --export-dir web/public/data \
-  --trace-queries 42,7,123
-```
-
-- `--export-dir` writes `manifest.json`, appends to `bench.json`, and writes the
-  traced query files and prune fixture.
-- `--trace-queries` runs traced searches **after** the timed trials. The benchmark
-  path never pays for instrumentation.
-- A separate tiny fixture exports `prune.json`; it does not need SIFT.
-- The exporter refuses `dirty=true` and refuses a schema mismatch.
-
-### 5.3 Trace without polluting the benchmark
-
-```text
-template <bool Trace>
-SearchResult searchImpl(span query, k, ef, TraceSink* sink) const;
-
-SearchResult search(...) const          // Trace = false
-SearchTrace searchTraced(...) const     // Trace = true
-```
-
-The timed path instantiates `Trace=false`; the compiler removes the sink branches.
-The exporter instantiates `Trace=true`. Test: 100 queries, same IDs/distances.
-
-Do not put a virtual `onVisit()` in the hot loop and hope it is free. The
-compile-time switch is the design; explain it in the interview.
-
-### 5.4 Query-centric graph export
-
-1. Run the traced search; collect every visited node and its layer.
-2. Add each visited node's layer-0 neighbours; cap at ~500 nodes.
-3. Emit nodes with original IDs, level, degree; emit edges with the layer.
-4. Emit `layer_counts` for the whole index, so the site can show the funnel
-   (`100,000 → ~6,250 → ~390 → ~24` for M=16; exact counts from the run).
-
-The result is exactly the part of the index that produced this answer.
-
-### 5.5 The prune fixture
-
-Two Gaussian clusters, ~200 points each, in 2D. Build the graph twice — nearest-only
-and Algorithm 4 — and export points, edges, entry, query, reachable set, and
-reachability. This is a **test fixture**, not a SIFT benchmark. It is allowed to be
-2D because it demonstrates a graph property; label it synthetic.
-
-### 5.6 JSON writer
-
-Write it by hand (~100 lines) or vendor `nlohmann/json` in `hns_io` only.
-Recommendation: a small tested writer, because the schema is simple and the core stays
-dependency-free. Sort keys/arrays; fixed float rounding; include the seed and
-checksums. Do not put JSON in `hns_core`.
-
----
-
-## 6. The frontend
-
-### 6.1 Stack
-
-| Choice | Why |
-|---|---|
-| **Vite + React + TypeScript** | you know React; static build; no server |
-| **Tailwind CSS** | fast, consistent layout |
-| **SVG for the curve** | precise axes; no chart library; small bundle |
-| **Canvas 2D for the graph** | 500 nodes at 60 fps; SVG would choke at the cap |
-| **`d3-scale`, `d3-force`** | small utilities, not all of D3 |
-| **React Router** | shareable URLs like `/trace?query=42` |
-| **Cloudflare Pages / Vercel** | free, fast, no cold starts |
-
-No Next.js: no server, no SEO requirement, no request-time data fetching. Vite
-produces `dist/`; that is the deployment.
-
-### 6.2 Rendering rules
-
-- The curve is the hero. One chart, clear axes, units, caption with `run_id`.
-- The graph is a canvas, not a React tree. Keep node/edge state in refs; do not
-  re-render 500 components per frame.
-- The replay is driven by a single `step` index; everything else derives from it.
-  Play/pause is a `requestAnimationFrame` loop with a speed multiplier.
-- Hover uses a linear scan over ~500 nodes; that is fast enough. No quadtree.
-- Code-split `/trace` and `/prune`; the landing page loads fast.
-- Keyboard controls for play/pause/step; visible focus; `prefers-reduced-motion`.
-
-### 6.3 Layout pipeline
-
-Force layout in the browser at load time is janky and non-deterministic. Precompute:
-
-```text
-scripts/layout.mjs
-  reads  web/public/data/queries/*.json
-  runs   d3-force with a fixed seed (300 ticks)
-  writes web/public/data/queries/*.layout.json
-```
-
-Run as `npm run data:layout` before `npm run build`. The site draws fixed positions.
-Regenerate when the graph changes; commit the layout files or build them in CI.
-
-### 6.4 Visual direction
+### Visual direction
 
 **Technical report, not SaaS landing page.**
 
-- Near-black background (`#0b0d10`), off-white text, one amber accent (`#f5a524`)
-  for HNSW, cyan (`#4cc9f0`) for ground truth, red for misses.
-- Monospace for numbers (JetBrains Mono / IBM Plex Mono), sans for prose.
-- No hero image, no gradients, no glassmorphism, no stock illustrations.
-- Every chart has a caption with the command/`run_id`.
+- Near-black background, off-white text, one amber accent for retrieval, cyan for
+  sources/hits, red for misses.
+- Monospace for numbers; sans for prose.
+- No hero image, gradients, glassmorphism, or stock illustrations.
+- Every benchmark number has a caption with `run_id` or "not measured."
 - Motion 150–250 ms; respect `prefers-reduced-motion`.
-- Color for layer/state, not decoration. Never encode meaning by color alone; use
-  labels/shapes too.
-- The overview and table work on a 390 px phone. The graph can say "best on desktop".
+- Color is not the only carrier of meaning; use labels and shapes.
+- The Documents/Ask flow works on a 390 px phone. The map can say "best on desktop."
 
-The design should feel like a measurement, not a pitch.
+### Performance
 
-### 6.5 Performance and accessibility
-
-- `bench.json` under ~100 KB; each query trace under ~1 MB (gzip); 500-node cap.
-- Landing page under ~2 s on a normal connection.
-- Lighthouse performance/accessibility reasonable (≥90 where it matters); the graph
-  is usable with a keyboard.
-- No analytics, no cookies, no API keys, no database.
+- The app shell should load fast; the benchmark JSON is small.
+- The map payload is capped at 2,000 points; default 1,000. If it is slow, reduce the
+  default, not the truth.
+- No analytics, cookies, API keys in the frontend, or hidden network calls.
 
 ---
 
-## 7. Build and deploy
+## 8. The 60-second demo
 
-```bash
-# 1. produce evidence locally, once per frozen run
-./build/bench ... --export-dir web/public/data --trace-queries 42,7,123
+Fill every placeholder from the real `bench.json`; never say a number that is not in
+the artifact.
 
-# 2. validate + build the static site
-cd web
-npm ci
-npm run data:check
-npm run data:layout
-npm run build
+1. **0–10 s — product.** "This is VectorForge. I upload a document, it gets chunked and
+   embedded locally, and the vectors go into an HNSW index I wrote from scratch in
+   C++."
+2. **10–25 s — ask.** Upload a short doc; ask a question that is answerable only from
+   it. Show the answer and click a citation. "The answer is grounded in these chunks.
+   If the index finds nothing, it says so instead of inventing an answer."
+3. **25–35 s — map.** "These are the real embeddings, projected to 2D with PCA. The
+   query and its retrieved chunks are highlighted. This is a visualization, not a
+   benchmark."
+4. **35–50 s — benchmark.** "The same engine is measured on 100,000 SIFT vectors:
+   R@10 R% at Q QPS, p95 P ms, B seconds to build, M MB RSS. Exact search does E QPS.
+   Every point is a real run; the command and commit are here."
+5. **50–60 s — close.** "The engine is single-threaded, L2, and rebuilt from SQLite on
+   startup. The next step would be a graph snapshot or a concurrent read path, not a
+   1M sweep."
 
-# 3. deploy dist/
-# Cloudflare Pages: build command `npm run build`, output `dist`
-# or: npx wrangler pages deploy dist
-```
+If the interviewer asks for the pruning detail, open the "Why diversity?" panel and
+draw the two-cluster example. Do not open a separate static site; there isn't one.
 
-CI (GitHub Actions) does **not** run the 100k benchmark. It:
+**Resume bullet template:**
 
-1. builds the core and runs gtest;
-2. validates `web/public/data/*.json` against the schema;
-3. builds the site;
-4. deploys on `main`.
+> Built a RAG app backed by a from-scratch C++20 HNSW engine: document upload,
+> SQLite persistence, Ollama embeddings, cited answers, and a 2D embedding map.
+> Benchmarked the same engine against exact search on 100k SIFT: R@10 0.9X, X QPS vs
+> Y exact (Z×), p95 W ms, B s build, M MB RSS. Demo: `<url>`.
 
-The 100k artifacts are generated locally on the machine named in the manifest. Commit
-the small JSON files under `web/public/data/` (the traces are capped at 500 nodes) so
-a clean clone and CI can build the site; the dataset itself is not committed. That is
-deliberate: the numbers must match the hardware in the README. A `make showcase`
-target runs the benchmark, exports, validates, and builds the site. One command, no
-manual JSON editing.
-
----
-
-## 8. Session plan
-
-The core is S1–S22. The showcase is four sessions, S23–S26. Ship is S27–S28.
-
-| # | Goal | Done when |
-|---|---|---|
-| S23 | Export the evidence: library boundary, `manifest.json`, `bench.json`, `queries/q0042.json`, `prune.json`, schema check | one command produces valid artifacts from the S22 release run |
-| S24 | `/` overview: Vite/React/TS, curve, table, method, reproduce footer, deploy | public URL; every hero number maps to `run_id` |
-| S25 | `/trace`: query-centric graph + replay, layers, results vs GT, keyboard | the search is legible without narration; 500-node cap |
-| S26 | `/prune` + polish: two-cluster visual, reachability/recall labels, README image, responsive | reachability flips on screen; numbers match CSV |
-
-If S23–S26 slip, ship the README + curve + prune PNG and call the static site a
-stretch. Do not delay the v1 core for the showcase.
-
-Optional after S28: WASM playground on `siftsmall` (timebox two sessions), a second
-dataset tab, a build replay. None are v1.
+Three numbers maximum; CPU/RAM and the full table are in the README.
 
 ---
 
 ## 9. Definition of done
 
-- A public HTTPS URL that loads in under two seconds on a normal connection.
-- Every number on the site is traceable to a JSON row and the commit in
-  `manifest.json`.
-- A clean clone can regenerate the data and the site with two commands (given the
-  datasets).
-- The 60-second demo works without opening a terminal.
-- The README embeds the prune image and links the site.
-- CI validates the data schema and builds the site; it does not fake a 100k run.
-- No backend, no API keys, no database, no analytics, no cookies.
-- `dirty=false`; the artifacts match the tagged commit.
-- Lighthouse performance/accessibility reasonable; the graph is keyboard-usable.
+- Documents: upload/paste, list, delete, restart; no partial documents.
+- Ask: answer with citations; no-hit path; Ollama-down path; no fake fallback.
+- Map: real embeddings, deterministic sample, query/hits highlighted, projection label.
+- Benchmark: real `bench.json`, table/curve, command, metadata, no invented numbers.
+- README: product screenshot or short recording, measured table, limitations, run
+  commands.
+- A 60-second demo works without editing code or faking data.
+- No fake embeddings, no hardcoded speedup, no "production-grade" claim.
+- The app is usable on a phone for Documents/Ask; the map can be desktop-first.
+
+A public deployment is a stretch in v1. A local documented demo plus a recording is
+enough to show the product; a public URL is better if it can run Ollama reliably.
 
 ---
 
-## 10. The 60-second demo
-
-Fill every placeholder from `bench.json`; never say a number that is not in the
-artifact.
-
-1. **0–10 s — claim.** "Brute force over 100,000 SIFT vectors does about B queries
-   per second. I built HNSW from scratch in C++ and measured R% recall@10 at Q QPS —
-   a measured S× speedup at that recall."
-2. **10–25 s — curve.** "Every point is a real run. Hover one and you get the
-   `run_id` and the exact command. Build was B seconds; RSS was M megabytes. Nothing
-   here is interpolated."
-3. **25–40 s — trace.** "Here is one query. It starts at the top layer, descends
-   greedily, then searches a beam of `ef=<efSearch>` at layer 0. It touched V vectors
-   — P% of the dataset — and found H of the 10 true neighbours."
-4. **40–50 s — prune.** "The hard part was connectivity. Keeping only the nearest
-   neighbours disconnects the two clusters; the diversity heuristic keeps a bridge.
-   Reachability goes from N1 to N2, and cluster recall from R1 to R2."
-5. **50–60 s — close.** "Ground truth is exact scan over the same 100k prefix, and CI
-   fails if recall drops below 0.90. It is in-memory, single-threaded, and SIFT-only;
-   the next step would be IVF-PQ for memory-bound scale."
-
-If the interviewer asks for more, go to the whiteboard. Do not open the graph
-explorer; there isn't one.
-
-**Resume bullet template:**
-
-> Built a from-scratch C++20 HNSW vector index and exact-scan ground-truth harness
-> over 100k SIFT vectors — R@10 0.9X [CI], X QPS vs Y QPS exact (Z×) at the SLO
-> point, p95 W ms, B s build, M MB RSS; recall-gated CI and a static trace explorer
-> that replays each query's graph walk. Demo: `<url>`.
-
-If and only if the 1M row is measured, add "1M scale run." Three numbers maximum;
-CPU/RAM and the full table are in the README.
-
----
-
-## 11. Non-goals
+## 10. Non-goals
 
 | Not this | Because |
 |---|---|
-| A live 1M backend | 700 MB, cold starts, cost, numbers that do not match the README |
-| Auth, accounts, uploads | nothing to do with the claim |
-| A chat/RAG interface | not this project |
-| A dashboard with twenty charts | one curve, one table, three visuals is enough |
-| A 3D graph | harder to read, not more impressive |
-| A mock search box | the entire point is that the data is real |
-| A five-page site | `/graph` and `/trace` duplicate; About is a footer |
-| WASM in v1 | second toolchain, not the claim |
+| A static three-page showcase | the product is the showcase (D12) |
+| A 3D map | cosmetic; 2D shows the same truth (D14) |
+| A KD-tree tab | high-dimensional decoration; one engine path (D14) |
+| A live 100k benchmark in the API | noisy and slow; CLI report only (D11) |
+| A trace-replay page | not needed for the product story; optional later |
+| Auth, teams, billing | no user need in v1; adds a security surface |
+| Agents, Graph RAG, tool calling | a different project |
+| A fake demo fallback | destroys the only thing the project is selling: trust |
+| A dashboard with twenty charts | one curve, one table, four tabs is enough |
 
 ---
 
-## 12. Risks
+## 11. Risks
 
 | Risk | Mitigation |
 |---|---|
-| Export format churns | versioned schema + `check-data.mjs` in CI |
-| Trace files are huge | 500-node cap, events not full beams, gzip |
-| Graph layout is slow/jittery | precompute with a fixed seed at build time |
-| Scope creep in the UI | one question per page; cut anything that does not answer it |
-| Numbers drift from the README | regenerate artifacts at the final commit; show the SHA |
-| WASM eats a week | timebox two sessions; ship the static site without it |
-| Site hides a weak result | show limitations and CIs; never replace a measured number |
+| Ollama is slow/unavailable during the demo | health check; clear 503; pre-warm; record a backup demo |
+| The map looks like a random cloud | label it as PCA; show sample size; highlight hits |
+| The answer cites nothing | show a warning; do not present it as grounded |
+| Benchmark JSON is from an old commit | show commit/dirty; warn on mismatch |
+| Frontend scope creep | four tabs; D20 cut list; no static site |
+| Fake data sneaks back in | delete `textToEmbedding`; code review; tests with a fake Ollama only |
+| The product hides a weak engine | benchmark tab shows real numbers and limitations |
+| The demo is too long | 60-second script; benchmark tab is the backup for questions |
 
 ---
 
-## 13. What this requires from the core
+## 12. What this requires from the engine and API
 
-Only two things, both cheap if done early:
+Only three things, all cheap if done early:
 
-1. **Build `hns_core` as a library from S1.** The CLI is a thin shell. This enables
-   the exporter, tests, and a future WASM build without a rewrite.
-2. **Design the trace hook before search is frozen.** A `template <bool Trace>`
-   implementation keeps the timed path clean and makes the replay possible.
+1. **A stable slot-to-chunk mapping.** The API returns chunk IDs; the engine returns
+   slots. Keep the mapping in one place.
+2. **Mark-deleted search filtering.** The UI must never show a deleted chunk as a
+   source.
+3. **A benchmark report endpoint.** The UI reads `bench.json`; it does not run the
+   benchmark.
 
-Everything else in S1–S22 is unchanged. The showcase starts at S23, after the numbers
-exist. **Measure first, show second.**
+Everything else in the engine is unchanged. The product starts after the engine's
+small-fixture tests pass, not after a perfect UI. **Measure first, show second; make it
+work, then make it pretty.**

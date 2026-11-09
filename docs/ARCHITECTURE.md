@@ -1,628 +1,919 @@
-# HNSWhy — Architecture
+# VectorForge / HNSWhy — Architecture
 
-> **v1 lock:** 100k graded, single-threaded, in-memory, L2, no delete/persistence/
-> server/WASM. 1M is one optional scale run after v1. The canonical decisions are in
-> `DECISIONS.md`; the algorithm contract is `HNSW-SPEC.md`; the schedule is
-> `WORKFLOW.md`.
+> **Status: planning and merge.** No engine code exists in this repo yet. The
+> frontend source exists in the separate VectorForge project and will be imported as
+> `frontend/`. The decisions in `DECISIONS.md` are the lock; this file explains the
+> shape that follows from them.
 >
-> This file explains the shape and the "why", in plain language. It is not a code
-> listing. Sessions 1–2 have built the target skeleton and the distance kernel;
-> algorithm files arrive with their components.
+> **v1 in one line:** a RAG app a stranger can use, backed by a from-scratch C++ HNSW
+> engine, measured against exact search on SIFT-100k, with tests and a reproducible
+> benchmark.
 
 ---
 
-## 0. The ten-second version
+## 0. Ten-second version
 
-HNSWhy is **one headless C++ binary** plus **one static site that presents what it
-measured**.
+A user uploads documents. The backend splits them into chunks, asks Ollama for an
+embedding per chunk, stores the text and vectors in SQLite, and inserts the vectors
+into a from-scratch HNSW index. When the user asks a question, the backend embeds the
+question, retrieves the nearest chunks with HNSW, and asks Ollama to answer using only
+those chunks. The answer comes back with citations. A separate CLI measures the same
+engine on SIFT-100k and writes `bench.json`; the UI's Benchmark tab reads that file.
 
-You give the binary a vector file and some options. It loads the vectors, builds an
-HNSW graph, runs queries, compares against exact search, and writes a CSV plus a
-small set of JSON artifacts. The site turns those artifacts into a curve, a query
-replay, and a pruning proof. There is no login, no database server, and no API. The
-core is like `git` or `grep`; the showcase is a `dist/` folder on a static host.
-
-The claim is narrow:
-
-> "On 100,000 SIFT vectors, this index found **R%** of the true top-10 at **Q**
-> queries per second, while exact search did **B** QPS — a measured **S×** speedup
-> at that recall, with a 95% interval and a reproducible command."
-
-The site's job is to make the measurement legible, not to produce it. Every number
-on the site comes from an exported artifact with a `run_id`.
+The product is the demo. The engine is the depth. The benchmark is the evidence.
 
 ---
 
-## 1. The shape: headless core, static showcase
+## 1. Why this shape
 
-The split surprises MERN developers:
+Three layers, three different jobs:
 
-| You might expect | What actually happens |
+| Layer | What it is | Why it exists |
+|---|---|---|
+| **Product** | React UI, HTTP API, SQLite, Ollama | A stranger can use it without reading code |
+| **Engine** | `VectorStore`, `BruteForce`, `HNSW`, metrics | The retrieval is actually implemented, not wrapped |
+| **Evidence** | `hns_bench` CLI + `bench.json` | The engine's quality is measured, not asserted |
+
+The boundaries are deliberate:
+
+- The engine knows **slots, floats, distances, and graph links**. It does not know
+  documents, SQL, HTTP, JSON, or Ollama.
+- The product knows **documents, chunks, text, HTTP, SQLite, and prompts**. It does
+  not implement HNSW or brute force.
+- The benchmark uses the **same engine library** as the server. It is not a second
+  implementation that can drift.
+- The benchmark is a **CLI**, not an HTTP endpoint. Network and JSON latency do not
+  contaminate the SIFT numbers.
+
+This is a library plus a product, not a microservice architecture. A single C++
+server process and a static frontend are enough for v1. Splitting the engine into its
+own service would add deployment, serialization, and failure modes without improving
+the claim.
+
+---
+
+## 2. System diagram
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│ Browser                                                            │
+│  React UI (Vite)                                                   │
+│  Documents │ Ask │ Map │ Benchmark                                 │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │ HTTP JSON / multipart
+┌───────────────────────────────▼────────────────────────────────────┐
+│ C++ server (cpp-httplib)                                           │
+│                                                                    │
+│  api/routes        validation, JSON, static files, errors          │
+│  product/rag       retrieve + prompt + citations                   │
+│  product/store     SQLite: documents, chunks, embeddings           │
+│  product/ollama    embed + generate                                │
+│  engine/HNSW       in-memory graph over VectorStore                │
+│  engine/BruteForce exact answer key (tests and benchmark)           │
+└───────────────┬───────────────────────────────┬────────────────────┘
+                │                               │
+        ┌───────▼────────┐              ┌───────▼────────┐
+        │ SQLite file    │              │ Ollama server  │
+        │ source of truth│              │ embeddings+LLM │
+        └────────────────┘              └────────────────┘
+
+Separate process, same engine library:
+
+  SIFT fvecs/ivecs ──► hns_bench ──► bench.json ──► GET /api/benchmark ──► UI
+```
+
+Two important separations:
+
+1. **SQLite is the source of truth; HNSW is a derived index.** The graph is rebuilt
+   from live embeddings on startup. There is no graph file to corrupt or version in
+   v1.
+2. **The benchmark is a controlled CLI run; the product is a live service.** The
+   Benchmark tab reads a frozen report. It never triggers a 100k build inside a web
+   request.
+
+---
+
+## 3. Components
+
+### 3.1 Frontend
+
+The existing VectorForge React/Vite app is the starting point, but the merge refactors
+it. The current app has a three-tab shell (Search, Documents, Ask AI) with an
+always-visible scatter plot; it talks to the old `/items` and `/doc/*` endpoints and
+computes fake 16D embeddings for the old Search and visualization paths. v1
+restructures it into the four tabs below, rewrites `api.js` for `/api/*`, and removes
+the fake-embedding path. The visual language and reusable components are kept; the old
+Search tab is not a v1 route.
+
+| File | Responsibility |
 |---|---|
-| React page with a search box | Static site reading JSON exported by the benchmark |
-| Express route `POST /search` | A CLI flag `--efSearch 50`; there is no API |
-| MongoDB storing vectors | One flat `std::vector<float>` in RAM |
-| A UI showing results | A UI showing *measured* results, the graph, and the replay |
-| A server you deploy | A `dist/` folder on Cloudflare Pages/Vercel |
-
-**Why no backend.** The index needs ~700 MB at 1M, free tiers give 512 MB and sleep,
-cold starts are 10–30 s, and a cloud CPU would produce different QPS/latency than the
-machine named in the README. Static artifacts keep one source of truth. The numbers
-are measured locally, on the machine in `manifest.json`.
-
-**Why a frontend at all.** HNSW is invisible. A terminal table proves the result,
-not the mechanism. A query touches a few hundred to a few thousand vectors out of
-100,000; the interesting part is *which* ones and *why*. A graph + replay makes that
-legible in seconds. That is the interview asset, not a search box.
-
-**The honesty rule.** The showcase never computes a benchmark number. It renders
-artifacts produced by `hns_bench`, and every artifact names the commit, the machine,
-the dataset checksum, and the exact command. If a number is not in `bench.json`, it
-does not appear on the site.
-
-**Optional live search.** A WebAssembly build of `hns_core` on `siftsmall` (10k
-vectors, ~5 MB) is a stretch item. It is clearly labelled as a 10k demo, not the
-100k native benchmark. It is not in v1.
-
----
-
-## 2. MERN translation table
-
-| MERN thing | HNSWhy equivalent | Notes |
-|---|---|---|
-| `npm install` | `pacman -S cmake ninja` | install tools, once |
-| `package.json` | `CMakeLists.txt` + `CMakePresets.json` | sources and build rules |
-| `npm run build` | `cmake --build --preset release` | compile |
-| `node server.js` | `./build/bench --dataset sift100k ...` | run it |
-| Express server | **nothing** | static showcase; no API, no cold starts |
-| MongoDB collection | `std::vector<float>` in `VectorStore` | 100k × 128 floats, contiguous |
-| Mongo's B-tree index | `class HNSW` | the thing we build |
-| `db.collection.find(...)` | `index.search(query, k, ef)` | one function call |
-| a request | one query vector | 128 floats in, 10 IDs out |
-| Jest / Vitest | GoogleTest | `./build/hns_tests` |
-| Postman | terminal + `results.csv` | how you inspect output |
-| React UI | `web/` (React/TS) reading JSON | showcase, not core |
-| `results.csv` | `web/public/data/bench.json` | data contract |
-| GitHub Actions | GitHub Actions | same, different commands |
-| `.env` | CLI flags | `--M 16 --efSearch 50` |
-
-**Mental shift:** the core collapses into one binary. Instead of a server waiting for
-requests, you have a program that reads files, computes, and exits. Requests become
-rows in a CSV. The showcase is a separate, static reader of those rows.
-
----
-
-## 3. The components
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  NATIVE (C++20)                                                      │
-│                                                                      │
-│  hns_core (library)                                                  │
-│    distance · vector_store · brute_force · hnsw · recall · trace     │
-│    no main, no argv, no paths, no ifstream, no JSON, no timing       │
-│                                                                      │
-│  hns_io (library)                                                    │
-│    fvecs/ivecs · CSV · JSON · manifest · checksums                   │
-│    no HNSW logic                                                     │
-│                                                                      │
-│  hns_bench (executable)                                              │
-│    CLI · dataset orchestration · runner · RSS · export mode          │
-│    the only place with paths, flags, timers, and file writes         │
-│                                                                      │
-│  hns_tests (executable)                                              │
-│    unit · invariants · fixtures · recall gate                        │
-│                                                                      │
-└───────────────────────────────┬──────────────────────────────────────┘
-                                │ CSV + JSON (one-way)
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  STATIC SHOWCASE (web/)                                              │
-│    /        claim · curve · table · method · reproduce footer        │
-│    /trace   query-centric graph + replay + results vs GT             │
-│    /prune   two-cluster nearest vs heuristic proof                   │
-│    no server · no API · no database · no computed headline numbers   │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### 3.1 `hns_core` — the algorithms
-
-| Component | Responsibility | Does not |
-|---|---|---|
-| `distance` | squared L2; metric-specific functions later | allocate, read files |
-| `vector_store` | own one flat float array; dim; size; slot → span | know about graphs |
-| `brute_force` | exact top-k over a store view | own vectors, mutate the store |
-| `hnsw` | graph, params, insert/search/prune, `validate()` | parse files, print, time |
-| `recall` | tie-aware recall, ID overlap, bootstrap CI | know about HNSW internals |
-| `trace` | `SearchTrace`, `TraceSink`, `searchImpl<true/false>` | write JSON |
-| `rng` | seeded level assignment | global random state |
-
-The core is a library, not a program. It takes spans and IDs, never paths. That is
-what makes it testable without a filesystem and reusable by the exporter and a future
-WASM build.
-
-### 3.2 `hns_io` — bytes and artifacts
-
-- fvecs/ivecs readers with strict record-size and dimension checks;
-- CSV writer for benchmark rows;
-- JSON writer for `manifest.json`, `bench.json`, `queries/q0042.json`, `prune.json`;
-- sha256 / dataset and query-set checksums;
-- deterministic key/array ordering and float rounding.
-
-`hns_io` is not linked by `hns_core`. It is linked by `hns_bench` and `hns_tests`.
-A future `hns_wasm` links `hns_core` only.
-
-### 3.3 `hns_bench` — the only `main()`
-
-- parse flags (`--dataset`, `--base`, `--query`, `--gt`, `--M`, `--efConstruction`,
-  `--efSearch`, `--k`, `--trials`, `--out`, `--export-dir`, `--trace-queries`);
-- load the store and query set through `hns_io`;
-- build BF / HNSW once per configuration;
-- warm up, run query trials, measure latency/QPS;
-- measure build time and RSS;
-- ask `hns_io` to write CSV/JSON after timing;
-- print a human-readable summary.
-
-The algorithm code never sees `argv`. The benchmark code never contains graph logic.
-The exporter never computes a metric.
-
-### 3.4 `hns_tests` — the safety net
-
-- unit tests for distance, store, BF, recall, IO;
-- `validate()` after every insert on small random graphs;
-- hand-built graph tests for descent and beam;
-- the two-cluster prune kill test;
-- trace equality (`searchTraced` == `search`);
-- the CI recall gate on `sift10k` with our own GT.
-
-### 3.5 `web/` — the static showcase
-
-Vite + React + TypeScript + Tailwind. SVG for the curve, Canvas for the graph,
-`d3-scale`/`d3-force` as small utilities, React Router for shareable URLs. Build to
-`dist/`; deploy to Cloudflare Pages/Vercel. No Next.js: no server, no SEO
-requirement, no request-time data fetching.
-
-The full design is in `SHOWCASE.md`.
-
----
-
-## 4. Ownership and data model
-
-This is the part that prevents a 512 MB duplicate and a whole class of bugs.
-
-### 4.1 `VectorStore`
-
-```text
-VectorStore
-  std::vector<float> data_     // size() * dim(), contiguous
-  size_t dim_
-  size_t size_
-  // v1: ID == slot (uint32_t). No unordered_map in the hot path.
-```
-
-- `reserve(n)` before loading, so slots do not move.
-- `add(span)` validates dim and capacity, appends.
-- `vector(slot)` returns `std::span<const float>`.
-- ID is the slot index. If external IDs are needed later, add a separate
-  `external_id` array; do not put a map in the hot path.
-- No `vector<vector<float>>`: 1M small allocations is the fragmentation problem the
-  flat store exists to avoid.
-
-### 4.2 Brute force
-
-`BruteForce` is a lightweight view over a store:
-
-```text
-search(store, query, k) -> top-k by (distance, id)
-```
-
-It does not own vectors and does not implement `add`/`remove`. It is the answer key
-and the baseline. The same scan loop is used to generate the 10k/100k ground truth;
-that is why the GT generator is not a separate, untested code path.
-
-### 4.3 HNSW
-
-`HNSW` holds:
-
-```text
-const VectorStore& store_
-std::vector<uint32_t> links0_      // N * M0, fixed stride
-std::vector<uint16_t> degree0_
-upper-layer adjacency (sparse)
-std::vector<uint8_t> level_
-std::vector<uint32_t> levelCount_
-uint32_t entry_
-int topLayer_
-RNG state
-```
-
-It never copies the vectors. The store is immutable during a build/search; the graph
-owns only IDs and links. BF and HNSW see the same slots, so the cross-check is
-meaningful.
-
-### 4.4 Interface
-
-The minimal interface is:
-
-```text
-SearchableIndex
-  search(span<const float> query, size_t k, size_t ef) -> SearchResult
-  size() -> size_t
-  dim() -> size_t
-```
-
-`SearchResult` contains the top-k IDs/distances plus `SearchStats`
-(`distance_computations`, `visited`, layer counts). Mutation is not in the base
-interface. `HNSW` has `build()` and `insert(slot)` for construction/tests. BruteForce
-does not pretend to be mutable.
-
-This resolves the old contradiction: an `Index::add(id, vec)` interface would either
-copy the vectors or mutate a shared store with an undefined lock story. The store is
-the owner; the indexes borrow.
-
----
-
-## 5. HNSW design
-
-The full algorithm contract is `HNSW-SPEC.md`. The architecture-level decisions:
-
-### 5.1 Layer 0: fixed-capacity flat adjacency
-
-```
-links0_:  N * M0 uint32_t   // one allocation, stride M0
-degree0_: N uint16_t
-```
-
-- `M0 = 2 * M` (default 32 for M=16).
-- Insert writes into the node's free slot; prune swap-erases the last neighbour into
-  the hole and decrements degree. O(M0), cache-friendly, no offset table.
-- The waste is bounded by the degree cap. That is the price of incrementality.
-- CSR is **not** used at layer 0. CSR is a static layout; HNSW insert/back-edge
-  pruning mutates existing lists. "How do you insert into CSR?" has no good answer.
-
-### 5.2 Upper layers: sparse
-
-Only about `1/M` of nodes reach layer 1, `1/M²` reach layer 2, etc. Upper layers may
-use per-node small vectors (or per-layer slabs). The `vector<vector<...>>` ban is
-narrowed to layer 0 and to per-vector float storage; upper-layer fragmentation is
-acceptable because there are ~6,250 nodes at layer 1 for 100k/M=16, not 100k.
-
-### 5.3 Graph model
-
-v1 uses a **symmetric** graph: if `u` lists `v`, `v` lists `u`. Pruning removes the
-reciprocal edge. This makes `validate()` and the interview explanation tractable.
-The invariants are in `HNSW-SPEC.md` §3: no self-loops, no duplicate edges, degree
-caps, layer membership, entry at top layer, `levelCount[l]` counts nodes with
-`level >= l`, symmetry.
-
-### 5.4 Insert / search / prune, in one paragraph each
-
-**Insert.** Sample a level from a seeded geometric distribution. Greedy-descend from
-the old top layer to `level+1` with `ef=1`. At each layer from `min(level, oldTop)`
-down to 0, beam-search with `efConstruction`, select diverse neighbours, add
-bidirectional edges, and prune any neighbour that overflows (using distances to that
-neighbour, not to the new node). Only after connecting may the new node become the
-entry point and raise `topLayer`.
-
-**Search.** Greedy-descend from `topLayer` to layer 1 with `ef=1`. At layer 0,
-beam-search with `ef_eff = max(efSearch, k)` and return the top k by `(distance, id)`.
-Terminate when the closest candidate is worse than the worst result and the result
-set is full. Visited state is **per layer**, not one global tag.
-
-**Prune.** Sort candidates by distance to the node being pruned. Keep a candidate if,
-for every already-selected neighbour `s`, `d(c, s) > d(c, ref)`. This keeps diverse
-directions and rejects redundant same-direction neighbours. The worked example in
-`HNSW-SPEC.md` §7.1 shows nearest-only dropping the bridge and the heuristic keeping
-it. The two-cluster test is the permanent guard.
-
-### 5.5 What is deliberately not here
-
-No physical delete, no persistence, no `shared_mutex`, no thread-local scratch, no
-zero-allocation CI, no strong exception guarantee, no filtering, no quantization.
-Those are stretch items. A correct single-threaded graph with a basic guarantee is the
-v1 target.
-
----
-
-## 6. Memory budget
-
-Use roughly 100k and 1M, with measured `VmHWM`/`ru_maxrss` replacing the estimates.
-
-### 100k (graded)
-
-| Thing | Size |
-|---|---:|
-| Base vectors: 100,000 × 128 × 4 B | 51.2 MB |
-| Layer-0 links: 100,000 × 32 × 4 B | 12.8 MB |
-| Layer-0 degree: 100,000 × 2 B | 0.2 MB |
-| Upper links + degree (sparse, ~N/M nodes) | <1 MB |
-| Levels/entry/counts | ~0.1 MB |
-| Visited tags (one search scratch) | 0.4 MB |
-| Queries: 10,000 × 128 × 4 B | 5.1 MB |
-| GT IDs + distances: 10,000 × 100 × 8 B | 8.0 MB |
-| **Total** | **~79 MB** |
-
-Peak during load should stay under ~100 MB if the loader reads records directly into
-a pre-sized buffer. Do not read the whole file into a `vector<char>` and then copy.
-
-### 1M (optional scale run)
-
-| Thing | Size |
-|---|---:|
-| Base vectors | 512 MB |
-| Layer-0 links: 1M × 32 × 4 B | 128 MB |
-| Layer-0 degree | 2 MB |
-| Upper links + degree | ~8 MB |
-| Levels/entry/counts | ~1 MB |
-| Visited tags | 4 MB |
-| Queries | 5 MB |
-| GT IDs + distances | 8 MB |
-| **Total** | **~668 MB** |
-
-Peak under ~800 MB with allocator overhead. The machine has 15 GiB; this fits. But
-there is **no second store**: BF and HNSW share the same `VectorStore`. A duplicate
-would add 512 MB. The first blowup at 10× scale is duplicate stores, then per-node
-`(maxLevel+1) * M0` blocks, then the loader's temporary buffer.
-
-The old 650 MB claim was close but omitted degree/upper/visited/GT. Use the itemized
-budget and the measured number. Do not claim 64-byte alignment via `aligned_alloc`
-while using `std::vector<float>`; auto-vectorization does not require it. If alignment
-matters later, add a custom allocator and measure it.
-
----
-
-## 7. Measurement architecture
-
-The benchmark is a first-class component, not a script afterthought.
-
-### 7.1 Build once, query many
-
-A configuration is `(dataset, M, efConstruction)`. Build the index once. Measure
-build time once. Warm up 100 queries. Run **5 query trials** against the same build.
-`efSearch` sweeps reuse the build. The BF baseline is computed once per
-`(dataset, query set, k)` and cached.
-
-No persistence in v1, so "fresh process per trial" would rebuild the graph five times
-and make sweeps impossible. Use a fresh process per **configuration**, not per trial.
-If per-trial process isolation is ever required, it waits for a serialized index.
-
-### 7.2 Metrics
-
-- `R@1`, `R@10`, `R@100`: mean per-query fraction, tie-aware, with 95% query-level
-  bootstrap CI. ID-overlap recall reported separately.
-- `QPS`: queries / wall time per trial; median across trials plus min/max.
-- `p50`, `p95`, `p99`: per-trial percentiles; median across trials plus range.
-- `build_s`, `inserts_per_s`, `build_dist_comps`.
-- `rss_peak`, `rss_steady`, `bytes_per_vector`, `index_size`.
-- `avg_distance_computations`, `avg_visited` (define the counting rule).
-- `bf_qps`, `speedup = qps / bf_qps` at the SLO point; also p95 ratio and
-  distance-computation ratio.
-- Threads = 1. State it in every headline.
-
-### 7.3 Query counts and CIs
-
-10,000 queries for the headline, README, showcase, resume, and SLO point. 1,000 fixed
-queries for per-PR smoke/regression, labelled `PRELIMINARY`, paired against a frozen
-baseline. At n=1,000, the normal-approximation 95% half-width at p=0.9 is ±1.9 pp;
-at n=10,000 it is ±0.6 pp. A 0.90 lower-bound gate at n=1,000 requires ~0.919
-observed, so a good 0.92 index passes only about 56% of the time. Do not gate the
-headline on 1k.
-
-### 7.4 SLO rule
-
-Pre-register the grid and one rule: **headline = the lowest-latency configuration
-whose R@10 query-level bootstrap lower bound is ≥ 0.90.** Tune `M`/`efConstruction`
-on `sift10k`; run the pre-registered 100k grid once and report every point. Report
-the actual recall and CI, not a `[0.90, 0.92]` band. Plot the full Pareto frontier;
-show dominated points too; no interpolation. R@1 is a diagnostic, not a second gate.
-
-### 7.5 CI vs release
-
-- **PR:** build, unit/invariant tests, recall on `sift10k` with our own GT (10k
-  queries if cheap, else a paired 1k), deterministic counters, RSS/build sanity. No
-  QPS/p95 gate on shared runners.
-- **Release:** `sift100k`, 10k queries, 3 build seeds, build/RSS/curve diff; block on
-  >0.5 pp recall drop or >10% distance/RSS regression. Publish only a pinned run with
-  `dirty=false`.
-
-The full CSV/JSON schema is in `plan.md` §7.
-
----
-
-## 8. Trace and export boundary
-
-The core exposes:
-
-```text
-template <bool Trace>
-SearchResult searchImpl(span query, k, ef, TraceSink* sink) const;
-
-SearchResult search(...) const          // Trace = false
-SearchTrace searchTraced(...) const     // Trace = true
-```
-
-- `Trace=false` compiles out all recording; the timed path never pays for a virtual
-  call.
-- `Trace=true` records events/deltas: layer enter, node visit, candidate push/pop,
-  result update, best change, cumulative distance computations. It does **not** store
-  the full beam every step. Cap 3–5 queries and ~500 nodes per query.
-- `hns_io` writes JSON. `hns_core` has no file I/O, paths, or JSON.
-- Test: for 100 queries, `searchTraced(...).ids == search(...).ids` and distances
-  match exactly. If they differ, the trace is lying.
-- The query graph uses a `GraphView` interface (`neighbors(slot, layer)`, `level`,
-  `entry`, `layer_counts`), not friendship with `HNSW`.
-- The prune fixture is a separate 2D test: two clusters, nearest vs heuristic, BFS
-  reachability, cluster recall. It is not a SIFT benchmark and must be labelled as
-  synthetic.
-
-The exporter runs **after** timed trials. It never changes the timed path.
-
----
-
-## 9. Build system and file layout
-
-### 9.1 CMake targets
-
-```text
-hns_core     STATIC   algorithms; no I/O
-hns_io       STATIC   fvecs/ivecs, CSV, JSON, manifest, checksums
-hns_bench    EXE      CLI, runner, RSS, export mode
-hns_tests    EXE      gtest + fixtures
-hns_wasm     optional stretch; hns_core only
-```
-
-### 9.2 Presets
-
-| Preset | Use | Flags |
-|---|---|---|
-| `dev` | local debugging/tests | `-O1 -g -fsanitize=address,undefined -Wall -Wextra` |
-| `release` | portable benchmark/CI | `-O3 -DNDEBUG -Wall -Wextra` |
-| `release-native` | headline run | `-O3 -DNDEBUG -march=native -Wall -Wextra` |
-| `ci` | GitHub Actions | `release` + tests + schema check |
-
-`bench --version` prints the build type, compiler, and flags. Every CSV/JSON row
-carries them. Do not enable `-Werror -Wconversion -Wsign-conversion` in the first
-weeks; the cast noise will dominate the learning.
-
-### 9.3 File tree (planned; add files as components start)
-
-```text
-CMakeLists.txt
-CMakePresets.json
-include/hnswhy/
-  types.h
-  distance.h
-  vector_store.h
-  index.h
-  brute_force.h
-  hnsw.h
-  recall.h
-  trace.h
-  rng.h
-src/core/
-  distance.cpp
-  vector_store.cpp
-  brute_force.cpp
-  hnsw.cpp
-  recall.cpp
-  rng.cpp
-src/io/
-  fvecs.cpp
-  ivecs.cpp
-  csv.cpp
-  json.cpp
-  manifest.cpp
-src/bench/
-  main.cpp
-  cli.cpp
-  runner.cpp
-  synthetic.cpp        # S2 timing smoke; the real runner arrives at S18
-  synthetic.h
-  rss.cpp
-  export_run.cpp
-tests/
-  test_distance.cpp
-  test_store.cpp
-  test_brute.cpp
-  test_hnsw_invariants.cpp
-  test_search_edges.cpp
-  test_prune.cpp
-  test_recall.cpp
-  test_trace.cpp
-  test_io.cpp
-  fixtures/
-scripts/
-  fetch-data.sh
-  checksum.sh
-web/
-```
-
-Keep `hnsw.cpp` as one file until it exceeds ~800 lines; split by operation only if
-it helps. Do not create empty files for later sessions. The build skeleton appears at
-S1; the algorithm files appear with their components.
-
----
-
-## 10. Testing strategy
-
-| Seam | Tests |
+| `frontend/src/App.jsx` | shell, tabs, global state |
+| `frontend/src/api.js` | one place for HTTP calls and error handling |
+| `components/DocumentsTab.jsx` | upload/paste, document list, chunk count, delete |
+| `components/AskTab.jsx` | question, answer, citations, retrieved chunks, latency |
+| `components/MapTab.jsx` | 2D PCA of real embeddings; query and hits highlighted |
+| `components/BenchmarkTab.jsx` | table, curve, params, command, run metadata |
+| `components/common/` | buttons, empty states, errors, loading, badges |
+| `lib/pca.js` | small 2D PCA over the sampled embedding matrix |
+
+Rules for the frontend:
+
+- No fake embeddings. The old `textToEmbedding` with `Math.random()` jitter is
+  removed.
+- No benchmark numbers in the frontend. Numbers come from `bench.json` through the
+  API.
+- The map is labelled as a 2D projection, not a truth.
+- The UI never calls Ollama directly. All model calls go through the backend.
+- Every error state has a sentence a user can act on: "Ollama is not running at
+  `localhost:11434`" is better than "Request failed."
+
+### 3.2 API layer
+
+`backend/src/api/routes.{h,cpp}`. One `main.cpp` only bootstraps.
+
+Responsibilities:
+
+- Parse and validate request bodies.
+- Enforce size limits (document text, question length, `k`).
+- Convert engine slots to chunk IDs and back.
+- Return consistent JSON errors: `{ "error": { "code", "message" } }`.
+- Serve the built frontend in production; in development, Vite proxies `/api`.
+- Hold the API mutex around engine and document-index operations.
+
+It does **not** contain HNSW logic, SQL strings scattered across handlers, or prompt
+construction. Those belong to the product layer.
+
+### 3.3 Product layer
+
+| File | Responsibility |
 |---|---|
-| Distance | hand-checked values; symmetry; zero vector; NaN policy; squared-L2 vs float64 reference |
-| VectorStore | add/get/size/dim; dim mismatch; capacity; no reallocation during read; self-distance 0 |
-| BruteForce | exact vs `sort` on small random; ties by ID; k>N; empty; same result as GT generator |
-| HNSW graph | `validate()` after every insert on N ≤ 200; degree caps; symmetry; entry/topLayer; levelCount |
-| Descent | hand-built line/graph; greedy reaches closest; tiny-N exact |
-| Beam | matches exhaustive for N ≤ 20; per-layer visited; termination; ef/k edges |
-| Insert | 0/1/2 nodes; connection before promotion; back-edge repair; no self/duplicate |
-| Prune | worked example; two-cluster kill test; nearest vs heuristic; fill-to-M flag |
-| Recall | tie-aware vs ID overlap; hand examples; bootstrap CI; known fixture |
-| Trace | `searchTraced` == `search` for 100 queries; event schema; no trace in timed path |
-| IO | truncated/corrupt/wrong-dim/empty fvecs/ivecs; record size; deterministic CSV/JSON |
-| Bench | fake clock percentiles; query-ID hash; CSV row validator; RSS parser |
+| `product/document_store.{h,cpp}` | SQLite schema, transactions, CRUD, embeddings |
+| `product/chunker.{h,cpp}` | split text into overlapping chunks |
+| `product/ollama_client.{h,cpp}` | embed and generate over HTTP, timeouts, errors |
+| `product/rag.{h,cpp}` | retrieve, build prompt, call generate, attach citations |
 
-The CI gate is the one that matters: `sift10k` with our own GT, fail if the recall
-lower bound drops below 0.90. Do not gate QPS on shared runners.
+`DocumentStore` is the only code that writes SQL. It exposes typed methods, not a raw
+database handle.
+
+`OllamaClient` uses two endpoints:
+
+- embeddings: `POST /api/embeddings` (or `/api/embed` depending on the Ollama
+  version; keep one adapter and test it)
+- generation: `POST /api/generate`
+
+It must have timeouts. A hung Ollama call must not hang the whole server forever.
+
+`RagService` is the product's retrieval story:
+
+```text
+question
+  -> embed(question)
+  -> normalize
+  -> hnsw.search(query, k=5, ef=50)
+  -> map slots to chunks
+  -> build prompt with numbered sources
+  -> ollama.generate(prompt)
+  -> answer + citations + retrieved chunks + timings
+```
+
+If the index has no live chunks, return a clear "I could not find this in the uploaded
+documents" response without calling the LLM. If the index has chunks, the constrained
+prompt decides whether the sources answer; a refusal is returned with its sources, not
+replaced by general knowledge. If Ollama is down, return `503` with a fixable message.
+Never invent an answer from general knowledge and present it as document-grounded.
+
+### 3.4 Engine library (`vf_engine`)
+
+The engine is a static library linked by the server, the benchmark, and the tests.
+
+| File | Responsibility |
+|---|---|
+| `engine/vector_store.{h,cpp}` | flat `std::vector<float>`, `reserve`, `add`, `get`, `size`, `dim` |
+| `engine/distance.h` | squared L2, normalization, small helpers |
+| `engine/brute_force.{h,cpp}` | exact top-k scan for tests and benchmark ground truth |
+| `engine/hnsw.{h,cpp}` | graph build, insert, search, prune, mark-deleted, validate |
+| `engine/metrics.{h,cpp}` | distance counts, timings, recall helpers |
+
+The public engine surface is deliberately small:
+
+```cpp
+using Slot = uint32_t;
+
+enum class PruneStrategy { Heuristic, NearestOnly };
+
+struct HNSWParams {
+    size_t M = 16;
+    size_t M0 = 32;
+    size_t efConstruction = 200;
+    size_t maxLevel = 32;
+    uint64_t seed = 42;
+    PruneStrategy prune = PruneStrategy::Heuristic;
+};
+
+struct Candidate {
+    float dist;
+    Slot id;
+};
+
+struct SearchStats {
+    uint64_t distanceComputations = 0;
+    uint32_t hops = 0;
+    uint32_t layerVisits = 0;
+};
+
+struct SearchResult {
+    std::vector<Slot> ids;
+    std::vector<float> distances;
+    SearchStats stats;
+};
+
+class VectorStore {
+public:
+    void reserve(size_t n, size_t dim);
+    Slot add(std::span<const float> v);
+    std::span<const float> get(Slot id) const;
+    size_t size() const;
+    size_t dim() const;
+
+private:
+    std::vector<float> data_;
+    size_t dim_ = 0;
+    size_t size_ = 0;
+};
+
+class BruteForce {
+public:
+    explicit BruteForce(const VectorStore& store);
+    SearchResult search(std::span<const float> query, size_t k) const;
+
+private:
+    const VectorStore& store_;
+};
+
+class HNSW {
+public:
+    HNSW(const VectorStore& store, HNSWParams params);
+
+    void build();
+    void insert(Slot id);
+    void remove(Slot id);              // mark-deleted
+    SearchResult search(std::span<const float> query, size_t k, size_t ef) const;
+    void validate() const;
+
+    size_t size() const;               // live vectors
+    size_t slot_count() const;         // includes tombstones
+    bool isDeleted(Slot id) const;
+
+private:
+    Slot greedySearchLayer(std::span<const float> query, Slot entry, int layer) const;
+    std::vector<Candidate> searchLayer(std::span<const float> query,
+                                       std::span<const Slot> entries,
+                                       size_t ef, int layer,
+                                       bool liveOnly) const;
+    std::vector<Slot> selectNeighbours(Slot ref,
+                                       std::span<const Candidate> candidates,
+                                       size_t cap) const;
+    void connect(Slot u, std::span<const Slot> neighbours, int layer);
+    void prune(Slot u, int layer);
+    int sampleLevel();
+
+    const VectorStore& store_;
+    HNSWParams params_;
+    // layer 0: flat links + degrees
+    // upper layers: sparse adjacency
+    // entryPoint_, maxLevel_, deleted_, rng_
+};
+```
+
+The graph details, invariants, and prune example are in `HNSW-SPEC.md`.
+
+### 3.5 Benchmark CLI
+
+`backend/bench/` builds `hns_bench`:
+
+| File | Responsibility |
+|---|---|
+| `bench/main.cpp` | argument parsing, orchestration |
+| `bench/fvecs.{h,cpp}` | read `.fvecs` / `.ivecs`, validate dimensions |
+| `bench/report.{h,cpp}` | write `bench.json` with metrics and run metadata |
+
+It links `vf_engine` and never links SQLite, Ollama, or the HTTP server. A benchmark
+run should work on a machine with no database and no model server.
+
+### 3.6 Tests
+
+`backend/tests/` builds `hns_tests`, linking `vf_engine` (and, for integration tests,
+the product layer). The test list and gates are in §11.
 
 ---
 
-## 11. v1 vs stretch vs non-goals
+## 4. Data model and persistence
 
-| Area | v1 | Stretch |
+### 4.1 SQLite schema
+
+```sql
+CREATE TABLE documents (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    title      TEXT NOT NULL,
+    text       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE chunks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    text        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE embeddings (
+    chunk_id INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+    dim      INTEGER NOT NULL,
+    vector   BLOB NOT NULL
+);
+
+CREATE INDEX idx_chunks_document ON chunks(document_id);
+```
+
+Open the connection with `PRAGMA foreign_keys = ON`; SQLite does not enforce the
+cascade rules by default. Without it, deleting a document would leave orphan chunks and
+embeddings.
+
+`chunks.id` is the external chunk ID. Engine slots are runtime-only: on startup, chunks
+are loaded in ID order and assigned slots `0..n-1`; the in-memory `slot_to_chunk_`
+vector is the mapping. Slots may change across restarts, which is fine because the
+graph is rebuilt at the same time. SQLite never stores an engine slot.
+
+### 4.2 Startup
+
+```text
+open SQLite
+  -> load chunks ordered by id
+  -> load embeddings joined on chunk_id
+  -> assign slot 0..n-1 in that order
+  -> store_.reserve(n, dim); add each vector
+  -> hnsw_.build()
+  -> slot_to_chunk_ ready
+  -> start HTTP server
+```
+
+The startup rebuild is part of the product's cost. It is measured for the product
+dataset (for example, 10k chunks), not folded into the SIFT benchmark. Startup refuses
+to serve if a chunk is missing its embedding or if dimensions are mixed; a broken
+database is not silently indexed.
+
+### 4.3 Insert
+
+```text
+validate title/text
+  -> split into chunks
+  -> embed each chunk (Ollama)
+  -> normalize each vector
+  -> begin SQLite transaction
+       insert document
+       insert chunks
+       insert embeddings keyed by chunk_id
+     commit
+  -> for each new chunk: slot = store_.add(vector);
+     hnsw_.insert(slot); slot_to_chunk_[slot] = chunk_id
+  -> update live counts
+```
+
+SQLite commits first. If the process dies before the graph inserts, the next startup
+rebuild repairs the graph. If an in-memory insert fails after commit, return an error
+and rebuild; the database remains the source of truth.
+
+### 4.4 Delete
+
+```text
+look up chunk IDs and their runtime slots
+  -> DELETE the document row (cascade chunks and embeddings)
+  -> hnsw_.remove(slot) for each
+  -> update live counts
+```
+
+The node remains as a routing node in memory. On restart, the document is gone from
+SQLite, so the rebuilt graph contains only live nodes. There is no physical graph
+compaction in v1. To find the slots for a document's chunks, scan `slot_to_chunk_` (or
+keep a small reverse map); this is O(live chunks) per delete and acceptable at v1 size.
+
+### 4.5 Why not persist the graph?
+
+A serialized HNSW graph is a second source of truth. It needs a format version, a
+compatibility check, a corruption test, and a rule for what happens when SQLite and
+the graph disagree. Rebuilding from embeddings is simpler and cannot drift. The cost
+is startup time, which is acceptable at the v1 target size. A graph snapshot is a
+stretch item with its own decision and corruption test.
+
+---
+
+## 5. Engine design in one page
+
+- **Store.** One flat `std::vector<float>`. Slot `i` starts at `i * dim`. No
+  per-vector allocation. `VectorStore` is the only owner of float data.
+- **Brute force.** Scan every slot in the store, keep a max-heap of size `k`. This is
+  the answer key for recall, tests, and benchmark ground truth. The product always
+  searches HNSW; brute force is not a second product path.
+- **HNSW.** Layered proximity graph. Layer 0 contains every node; upper layers are
+  sparse shortcuts. Greedy descent above layer 0, beam search at layer 0.
+- **Layer 0 storage.** `N * M0` `uint32_t` links plus a `uint16_t` degree per node.
+  Pruning swap-erases within the node's fixed slots. No CSR.
+- **Growth.** `VectorStore` and the HNSW adjacency arrays grow geometrically on insert;
+  old slot IDs and links stay valid. Do not rebuild the index on every upload.
+- **Upper layers.** Sparse; a small vector per node or per-layer slabs. The layer-0
+  flat rule does not apply to these thin layers.
+- **Directed graph.** Edges are added in both directions initially; pruning is
+  one-sided. There is no symmetry invariant.
+- **Mark-deleted.** Deleted nodes remain as routers, may be selected by insertion, and
+  are filtered from query results.
+- **Single-threaded.** One search at a time. The API serializes access.
+- **No persistence in the engine.** The product rebuilds from SQLite; the benchmark
+  builds once per run.
+- **Parameters.** Default `M=16`, `M0=32`, `efConstruction=200`, `efSearch=50` for
+  product queries; the benchmark sweeps `efSearch`.
+- **Determinism.** Fixed seed, tie-break by slot ID, no unordered iteration in a
+  result-affecting path.
+
+The full algorithm contract is `HNSW-SPEC.md`.
+
+---
+
+## 6. Product flows
+
+### 6.1 Upload and index
+
+1. User uploads `.txt`/`.md` or pastes text.
+2. Backend validates size and extracts plain text.
+3. `Chunker` splits into ~350-word chunks with ~50-word overlap.
+4. `OllamaClient::embed` returns one vector per chunk.
+5. Vectors are normalized.
+6. `DocumentStore` commits the document, chunks, and embeddings.
+7. `HNSW::insert` adds each slot.
+8. UI shows the document, chunk count, and indexing status.
+
+PDF extraction is deliberately deferred. A PDF library is a new dependency and a new
+failure surface; plain text and Markdown prove the flow.
+
+### 6.2 Ask
+
+1. User asks a question.
+2. Backend embeds and normalizes it.
+3. `HNSW::search(question, k=5, ef=50)` returns slots.
+4. Backend maps slots to live chunks.
+5. If the index has no live chunks, return a grounded "not found" response without
+   calling the LLM.
+6. Build a prompt with numbered sources and an instruction to answer only from them.
+7. `OllamaClient::generate` returns the answer.
+8. If the model refuses because the sources do not answer the question, return that
+   refusal with the sources; do not substitute general knowledge.
+9. Backend returns `{ answer, sources, retrieved, timings }`.
+10. UI renders the answer with clickable citations.
+
+The answer is not trusted just because it is fluent. The citations are the product's
+honesty mechanism: a user can open the chunk that supposedly supports the sentence.
+
+### 6.3 Map
+
+1. Backend samples up to 2,000 live chunks (default 1,000) and returns their vectors
+   plus document metadata.
+2. Frontend computes a 2D PCA (`lib/pca.js`) and draws points.
+3. The query and retrieved chunks are highlighted.
+4. The UI says: "2D projection of real embeddings; distances are approximate."
+
+The map is a visual aid, not a benchmark and not a proof of cluster quality. If PCA
+looks messy, that is allowed; the embeddings are real.
+
+### 6.4 Benchmark tab
+
+1. Backend reads `docs/results/bench.json` (or the `--bench-report` path).
+2. UI shows the SIFT-100k table, the recall–QPS curve, the chosen parameters, the
+   command, and the run metadata.
+3. If no report exists, the tab says how to produce one; it does not invent a chart.
+4. The tab never runs a 100k benchmark in the request.
+
+---
+
+## 7. API contract
+
+All endpoints are under `/api`. JSON in, JSON out, except document upload which is
+`multipart/form-data`.
+
+| Method | Path | Body / query | Returns |
+|---|---|---|---|
+| `GET` | `/api/health` | — | `{ status, ollama, db, vectors }` |
+| `GET` | `/api/status` | — | counts, build info, benchmark availability |
+| `POST` | `/api/documents` | multipart `file` or JSON `{title,text}` | `{ document_id, chunks }` |
+| `GET` | `/api/documents` | — | `[{ id, title, chunks, created_at }]` |
+| `DELETE` | `/api/documents/{id}` | — | `{ deleted: true }` |
+| `POST` | `/api/ask` | `{ question, k? }` | `{ answer, sources, retrieved, timings }` |
+| `GET` | `/api/map` | `?limit=1000` | `{ points: [{ chunk_id, document_id, title, vector }] }` |
+| `GET` | `/api/benchmark` | — | `bench.json` or `{ available: false }` |
+
+Error shape:
+
+```json
+{
+  "error": {
+    "code": "OLLAMA_UNAVAILABLE",
+    "message": "Ollama is not reachable at localhost:11434. Start it with `ollama serve`."
+  }
+}
+```
+
+Validation rules:
+
+- `question`: non-empty, max 2,000 characters.
+- `k`: 1–20, default 5.
+- document text: non-empty after trimming, max 2 MB per upload in v1.
+- title: non-empty, max 200 characters.
+- map `limit`: 1–2,000.
+- `DELETE /api/documents/{id}`: return `404` if the document does not exist; otherwise
+  delete and return `{ "deleted": true }`.
+
+There is no auth in v1. The README must say the demo is for a local or trusted
+environment, not a public multi-tenant service. If it is deployed publicly, put it
+behind a simple access gate or accept that anyone can upload and delete documents.
+
+---
+
+## 8. Benchmark and measurement
+
+The benchmark is a separate CLI:
+
+```bash
+./build/hns_bench \
+  --base data/sift/sift_base.fvecs \
+  --queries data/sift/sift_query.fvecs \
+  --groundtruth data/sift/sift100k_groundtruth.ivecs \
+  --groundtruth-dist data/sift/sift100k_groundtruth_dist.fvecs \
+  --n 100000 --k 10 \
+  --M 16 --efConstruction 200 --ef 50 \
+  --ef-grid 10,20,50,100,200 \
+  --trials 3 \
+  --out docs/results/bench.json
+```
+
+The release report is committed under `docs/results/`; the dataset stays in
+gitignored `data/`. A local scratch run may write `data/bench.json`.
+
+Protocol:
+
+1. Load and validate the base, queries, and ground truth.
+2. Build the index once; record build time.
+3. Warm up on 100 queries.
+4. Run every `--ef-grid` point from the same build; for each point, run three timed
+   passes over all 10,000 queries. `--ef` is the headline point.
+5. Compute recall against the exact prefix ground truth.
+6. Measure the exact-search baseline on the same queries, kernel, flags, and thread
+   count; reuse the cached baseline when the dataset/query/k triple is unchanged.
+7. Write `bench.json` with metrics, the curve, and metadata.
+
+Metrics:
+
+- `R@1`, `R@10`
+- QPS
+- p50 / p95 / p99 latency
+- build time
+- peak RSS
+- bytes per vector
+- average distance computations per query
+- exact-search QPS and speedup
+- parameter set and run metadata
+
+The SLO rule:
+
+> Pick the lowest-latency configuration whose `R@10` on `sift10k` is at least 0.90.
+> Report the measured `R@10` and QPS on `sift100k` for that configuration. Do not
+> claim a band; report the actual number. If `sift100k` falls below the 0.90 gate,
+> report the miss and fix the configuration; do not move the gate.
+
+The benchmark tab reads the report. It never computes a second headline.
+
+The optional ablation compares `--prune nearest` with `--prune heuristic` at the
+headline configuration. It is a later experiment, not a v1 UI panel; the two-cluster
+test is the v1 evidence for the heuristic.
+
+---
+
+## 9. Concurrency and failure behavior
+
+The engine is single-threaded. The API server may accept concurrent connections, but
+it serializes all operations that touch the document store or the engine with one
+mutex. This is a deliberate v1 tradeoff: correctness and a clean single-thread
+benchmark over a half-finished concurrent index.
+
+Failure behavior:
+
+| Failure | Behavior |
+|---|---|
+| Ollama not running | `/api/ask` and upload return `503` with a fixable message |
+| Ollama timeout | request fails after the configured timeout; server stays up |
+| SQLite write fails | transaction rolls back; no partial document |
+| Graph insert fails after DB commit | return error; rebuild on next start or trigger rebuild |
+| Benchmark file missing | Benchmark tab shows instructions, not a fake chart |
+| Embedding dimension mismatch | reject the document with a clear error |
+| Empty question | `400` with a validation message |
+| Empty index | grounded "not found" response; no LLM call |
+| Model refuses from sources | return the refusal with sources; no fallback answer |
+
+The server must not crash on a bad request, a missing file, or a model error. Those
+are normal product states.
+
+---
+
+## 10. File layout and build targets
+
+```text
+vectorforge/                       # repo root (currently HNSWhy/)
+├── CMakeLists.txt                 # adds backend/
+├── CMakePresets.json              # release/test presets used by the README
+├── frontend/
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── index.html
+│   ├── vite.config.js
+│   └── src/
+│       ├── App.jsx
+│       ├── api.js
+│       ├── components/
+│       │   ├── DocumentsTab.jsx
+│       │   ├── AskTab.jsx
+│       │   ├── MapTab.jsx
+│       │   ├── BenchmarkTab.jsx
+│       │   └── common/
+│       └── lib/pca.js
+│
+├── backend/
+│   ├── CMakeLists.txt
+│   ├── third_party/
+│   │   ├── httplib.h
+│   │   └── json.hpp
+│   ├── src/
+│   │   ├── main.cpp                 # bootstrap only
+│   │   ├── api/
+│   │   │   └── routes.{h,cpp}
+│   │   ├── product/
+│   │   │   ├── document_store.{h,cpp}
+│   │   │   ├── chunker.{h,cpp}
+│   │   │   ├── ollama_client.{h,cpp}
+│   │   │   └── rag.{h,cpp}
+│   │   └── engine/
+│   │       ├── vector_store.{h,cpp}
+│   │       ├── distance.h
+│   │       ├── brute_force.{h,cpp}
+│   │       ├── hnsw.{h,cpp}
+│   │       └── metrics.{h,cpp}
+│   ├── bench/
+│   │   ├── main.cpp
+│   │   ├── fvecs.{h,cpp}
+│   │   └── report.{h,cpp}
+│   └── tests/
+│       ├── test_distance.cpp
+│       ├── test_store.cpp
+│       ├── test_brute.cpp
+│       ├── test_hnsw.cpp
+│       ├── test_prune.cpp
+│       ├── test_delete.cpp
+│       ├── test_persistence.cpp
+│       ├── test_api.cpp
+│       └── test_bench.cpp
+│
+├── data/                            # gitignored
+│   ├── sift/
+│   └── vectorforge.db
+├── scripts/
+│   ├── fetch_sift.sh
+│   └── run_bench.sh
+├── docs/
+│   └── results/
+│       ├── README.md
+│       └── bench.json             # frozen release artifact (no dataset)
+├── README.md
+└── .gitignore
+```
+
+That is roughly 25 non-test C++ source/header files (34 with tests) and a dozen
+frontend files. There is no 1,000-line `main.cpp`: `main.cpp` opens the database,
+loads the index, registers routes, and starts the server. The algorithm lives in
+`engine/`; the SQL lives in `product/document_store`; the prompts live in
+`product/rag`.
+
+The root `CMakeLists.txt` only calls `add_subdirectory(backend)`; the targets live in
+`backend/CMakeLists.txt`. The presets keep the build in root `build/`, matching the
+README commands.
+
+### CMake targets
+
+```cmake
+add_library(vf_engine STATIC
+    src/engine/vector_store.cpp
+    src/engine/brute_force.cpp
+    src/engine/hnsw.cpp
+    src/engine/metrics.cpp
+)
+target_include_directories(vf_engine PUBLIC src/engine)
+
+add_executable(vectorforge_server
+    src/main.cpp
+    src/api/routes.cpp
+    src/product/document_store.cpp
+    src/product/chunker.cpp
+    src/product/ollama_client.cpp
+    src/product/rag.cpp
+)
+target_include_directories(vectorforge_server PRIVATE src third_party)
+target_link_libraries(vectorforge_server PRIVATE vf_engine sqlite3)
+
+add_executable(hns_bench
+    bench/main.cpp
+    bench/fvecs.cpp
+    bench/report.cpp
+)
+target_include_directories(hns_bench PRIVATE bench)
+target_link_libraries(hns_bench PRIVATE vf_engine)
+
+add_executable(hns_tests
+    tests/test_distance.cpp
+    tests/test_store.cpp
+    tests/test_brute.cpp
+    tests/test_hnsw.cpp
+    tests/test_prune.cpp
+    tests/test_delete.cpp
+    tests/test_persistence.cpp
+    tests/test_api.cpp
+    tests/test_bench.cpp
+    bench/fvecs.cpp
+    bench/report.cpp
+    src/api/routes.cpp
+    src/product/document_store.cpp
+    src/product/chunker.cpp
+    src/product/ollama_client.cpp
+    src/product/rag.cpp
+)
+target_include_directories(hns_tests PRIVATE src bench third_party)
+target_link_libraries(hns_tests PRIVATE vf_engine sqlite3)
+```
+
+`hns_tests` compiles the product and bench-support sources directly so the
+persistence, API, and report-schema tests exercise the real code. Only the engine is a
+shared library; there is no second engine implementation.
+
+Dependencies: C++20, CMake, `cpp-httplib` (header-only), `nlohmann/json`
+(header-only), SQLite3, Ollama running locally. The frontend uses the existing
+React/Vite stack.
+
+---
+
+## 11. Testing
+
+### 11.1 Engine tests
+
+| Test | What it proves |
+|---|---|
+| `test_distance` | squared L2 is correct; normalization works; zero vector handled |
+| `test_store` | add/get/reserve; dimension checks; no out-of-bounds |
+| `test_brute` | exact top-k; ties deterministic by slot |
+| `test_hnsw` | insert/search on a small graph; recall on a fixed fixture; invariants |
+| `test_prune` | two-cluster test: nearest-only disconnects, heuristic keeps a bridge |
+| `test_delete` | deleted IDs never returned; live neighbours still found; entry/top-layer safe |
+
+### 11.2 Product tests
+
+| Test | What it proves |
+|---|---|
+| `test_persistence` | insert -> restart -> rebuild -> same search results; delete -> restart -> gone |
+| `test_api` | upload/ask/delete with a fake Ollama; error paths; no partial document |
+| `test_bench` | fvecs/ivecs parsing; report schema; dirty-tree refusal |
+
+### 11.3 CI
+
+- Build `vf_engine`, `vectorforge_server`, `hns_bench`, `hns_tests`.
+- Run all tests.
+- Run `sift10k` with 1,000 queries and require `R@10 ≥ 0.90`.
+- Run the two-cluster prune test.
+- Run the persistence/restart test.
+- No 100k benchmark and no QPS gate in CI; shared runners are not a benchmark
+  machine.
+
+Sanitizers: a separate `ASan+UBSan` build runs the engine and product tests. It is not
+the release build.
+
+---
+
+## 12. Memory and performance expectations
+
+Approximate, excluding allocator overhead, SQLite cache, and Ollama (separate
+process):
+
+| Dataset | Vectors | Layer-0 links | Total engine |
+|---|---:|---:|---:|
+| SIFT-100k, 128D | 51.2 MB | 12.8 MB | ~65 MB |
+| Product, 10k chunks, 768D | 30.7 MB | 1.3 MB | ~33 MB |
+| Product, 100k chunks, 768D | 307 MB | 12.8 MB | ~322 MB |
+| SIFT-1M, 128D (optional) | 512 MB | 128 MB | ~651 MB |
+
+The product's SQLite file is roughly the size of its vectors plus text. At 10k
+chunks, the process is comfortable on a laptop. At 100k chunks, it is still possible
+but the startup rebuild and the SQLite file become noticeable; that is the upper end
+of the v1 target, not a promise of production scale.
+
+The benchmark's RSS is measured for the `hns_bench` process. The API's RSS is
+measured separately. Do not mix them.
+
+---
+
+## 13. v1, stretch, and non-goals
+
+### Ships in v1
+
+| Area | Ships |
+|---|---|
+| Product | upload/paste, list, delete, ask, citations, 2D map, benchmark tab |
+| Persistence | SQLite source of truth; rebuild on startup |
+| Engine | flat store, squared L2, brute force, HNSW insert/search/prune, mark-deleted |
+| Evidence | SIFT-100k, 10k queries, 3 trials per curve point, `bench.json`, README table |
+| Safety | unit/invariant tests, two-cluster test, recall gate on `sift10k`, persistence test |
+| Ops | documented local run; documented configuration; no auth |
+
+### Stretch (after v1)
+
+- One SIFT-1M configuration.
+- Graph snapshot with a corruption test.
+- Physical compaction of tombstones.
+- Concurrent read path.
+- PDF extraction.
+- Auth / access gate.
+- Reranker or hybrid search.
+- Streaming answer.
+- Docker packaging and a public deployment.
+- Same-host baseline against hnswlib/FAISS at matched recall.
+- Quantization for memory-bound scale.
+
+### Non-goals (do not build)
+
+- Multi-tenant SaaS, billing, teams.
+- Agents, tool calling, Graph RAG.
+- Distributed or multi-node search.
+- 3D map.
+- KD-tree.
+- Multi-metric benchmark.
+- Static showcase site.
+- Trace-replay page.
+- Live benchmark endpoint.
+
+These match `DECISIONS.md` D20. If one returns, it needs a new decision entry.
+
+---
+
+## 14. Risks and honest mitigations
+
+| Risk | Why it matters | Mitigation |
 |---|---|---|
-| Index | flat store, BF, HNSW insert/search/prune, multi-layer, validate | mark-deleted, physical delete, persistence, concurrency |
-| Data | siftsmall proof, sift10k CI, sift100k graded | 1M one config, cosine slice, pgvector, KDTree |
-| Metrics | R@1/10/100, CI, QPS, p50/p95/p99, build, RSS, distance comps | multi-thread scaling, perf counters, cold cache |
-| Showcase | `/`, `/trace`, `/prune` static | WASM playground, second dataset tab, build replay |
-| Ops | local binary, CI build/tests | server, Docker, Python bindings |
-
-**Non-goals:** a live 1M backend, auth/accounts/uploads, a RAG/chat app, a database
-product, a 3D graph, a mock search box, a five-page dashboard, a 1M sweep.
-
----
-
-## 12. What "done" looks like
-
-With placeholders until S22:
-
-```text
-$ ./build/bench --dataset sift100k --M 16 --efConstruction 200 \
-    --efSearch 50 --k 10 --trials 5 --export-dir web/public/data
-loaded 100,000 vectors in <L>s
-built HNSW in <B>s (M=16, M0=32, efConstruction=200)
-R@10 <R> [<lo>, <hi>]  QPS <Q>  p50 <...>ms  p95 <...>ms  p99 <...>ms
-RSS <...>MB  avg distance computations <...>
-wrote results.csv, manifest.json, bench.json, queries/q0042.json
-```
-
-One command. Real numbers. Reproducible on the named machine. Then:
-
-```text
-$ cd web && npm ci && npm run build
-$ # deploy dist/ to Cloudflare Pages
-```
-
-One static URL. The same numbers, the graph, and the query that produced them. If
-the 1M row was measured, it appears in a separate tab and says `N = 1,000,000`; it
-never replaces the 100k claim.
+| The merge is too big | Product + engine can become two unfinished projects | Build the engine first; keep the product to four tabs; obey D20 |
+| Frontend carries old overclaims | Fake embeddings and "production-grade" language destroy trust | Delete `textToEmbedding`; rewrite README; no number without `bench.json` |
+| Ollama is slow or unavailable | The demo fails on a stranger's machine | Health check; clear 503; document `ollama serve`; test with a fake client |
+| SQLite and graph drift | Wrong citations or missing results | SQLite is the source of truth; rebuild on startup; persistence test |
+| Startup rebuild is slow | Bad first-run experience | Measure it; target 10k chunks; show a loading state; graph snapshot is stretch |
+| PCA map is misleading | Users read clusters as truth | Label it as a 2D projection; show sample size; no benchmark claims |
+| Laptop benchmark noise | Numbers vary run to run | Three trials; record CPU/flags; report range; no cloud claim |
+| Scope creep | The project never ships | D20 cut list; one active project; demo before extras |
 
 ---
 
-## 13. Interview questions this architecture answers
+## 15. Definition of done
 
-1. **Why a flat store?** One allocation, contiguous scans, no 100k small vectors.
-2. **Why fixed-capacity L0, not CSR?** HNSW mutates neighbour lists; CSR is static.
-3. **Why does the store own the vectors?** BF and HNSW must see the same slots; a
-   duplicate store costs 512 MB at 1M and can drift.
-4. **Why is BF the answer key?** It is simple enough to verify by hand; the same scan
-   generates the ground truth.
-5. **Why generate 100k GT?** The shipped key is for all 1M; a subset against it is
-   invalid.
-6. **Why 100k?** Iteration speed and a valid answer key; 1M is a scale check.
-7. **Why build once and query five times?** Isolates build variance from query
-   variance; makes sweeps possible without persistence.
-8. **Why the diversity heuristic?** Nearest-only can drop the bridge between
-   clusters; the two-cluster test proves it.
-9. **Why no server?** The claim is measured locally; a cloud CPU would produce
-   different numbers and a second source of truth.
-10. **What breaks at 10×?** Duplicate stores first, then per-node adjacency blocks,
-    then the loader's temporary buffer. The memory table is the answer.
+v1 is done when all of these are true:
+
+1. A user can upload or paste a document, see it listed, and delete it.
+2. A restart preserves documents and search results.
+3. A question returns an answer with citations to real retrieved chunks.
+4. The map shows real embeddings in 2D, with the query and hits highlighted.
+5. The Benchmark tab shows a real SIFT-100k report, its parameters, and its command.
+6. `hns_tests` passes, including the two-cluster prune test and the restart test.
+7. `sift10k` CI recall is at least 0.90 at the chosen configuration.
+8. The README has the measured table, limitations, and a reproducible local setup.
+9. The 60-second demo works without editing code or faking data.
+10. The docs match the implementation; if they do not, fix the docs or the code.
+
+If only the engine works, the project is a measured index without a product. If only
+the product works, it is a RAG wrapper without depth. v1 is the pair.
+
+---
+
+## 16. Questions an interviewer can ask
+
+- Why HNSW instead of brute force or a KD-tree?
+- Why is the graph directed? What did you give up by not enforcing symmetry?
+- Why mark-deleted instead of removing edges?
+- Why rebuild the graph on startup instead of saving it?
+- How do you know the answer key is correct?
+- What does `efSearch` change, and what does it not change?
+- Why is the benchmark a CLI and not an API?
+- What happens when Ollama is down or slow?
+- What happens if SQLite commits but the graph insert fails?
+- What is the memory cost at 100k and at 1M?
+- What would you change first for concurrent users?
+- What did you deliberately cut, and why?
+
+If the answer is "the docs say so," that is not an answer. The point of the project is
+to be able to defend the tradeoffs, not to recite them.
