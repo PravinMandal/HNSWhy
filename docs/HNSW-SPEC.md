@@ -461,8 +461,10 @@ For each candidate `c`, in increasing order of `d(c, ref)`:
   `ref`, so it is redundant for connectivity).
 - Stop when `cap` neighbours are selected.
 
-Ties in `d(c, ref)` are broken by ID. The comparison is strict: if
-`d(c, s) == d(c, ref)`, reject to avoid redundancy.
+Ties in `d(c, ref)` are broken by ID. Reject when
+`0 < d(c, s) < d(c, ref)`. A zero distance means an exact duplicate; it is kept
+(up to `cap`) so all copies stay mutually reachable. Rejecting duplicates turns
+some of them into one-way leaves that no query can reach.
 
 ### 7.2 Worked example
 
@@ -486,8 +488,8 @@ edge from this node.
 **Heuristic, M=2:**
 
 1. Select **A**.
-2. B: `d²(B, A) = 0.01 <= d²(B, ref) = 0.04` → reject (same direction, redundant).
-3. C: `d²(C, A) = 0.04 <= d²(C, ref) = 0.09` → reject.
+2. B: `d²(B, A) = 0.01 < d²(B, ref) = 0.04` → reject (same direction, redundant).
+3. C: `d²(C, A) = 0.04 < d²(C, ref) = 0.09` → reject.
 4. D: `d²(D, A) = 0.16 > d²(D, ref) = 0.09` → **select D**. The right side is now
    reachable.
 5. Capacity is full; stop.

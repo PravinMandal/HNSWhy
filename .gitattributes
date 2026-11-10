@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+*.fvecs binary
+*.ivecs binary
+*.png binary
+*.jpg binary
+*.pdf binary
+*.tar.gz binary
+*.db binary
+*.sqlite binary
