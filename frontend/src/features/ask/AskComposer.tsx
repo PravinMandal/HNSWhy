@@ -25,6 +25,7 @@ export function AskComposer({
   onSubmit: () => void
 }) {
   const inputId = useId()
+  const errorId = `${inputId}-error`
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -45,9 +46,6 @@ export function AskComposer({
           Your question
         </label>
         <div className="composer__badges">
-          <Badge tone="accent" dot>
-            grounded
-          </Badge>
           <Badge tone="neutral">{pluralize(documentCount, 'document')} available</Badge>
         </div>
       </div>
@@ -63,6 +61,8 @@ export function AskComposer({
         maxLength={2000}
         disabled={busy}
         autoFocus
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
       />
 
       <div className="composer__foot">
@@ -90,7 +90,7 @@ export function AskComposer({
         </Button>
       </div>
 
-      {error ? <InlineError>{error}</InlineError> : null}
+      {error ? <InlineError id={errorId}>{error}</InlineError> : null}
     </form>
   )
 }

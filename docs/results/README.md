@@ -1,8 +1,9 @@
 # Benchmark Results
 
 `bench.json` is the frozen release artifact produced by `hns_bench`. The README
-table and the product's Benchmark tab read this file; nothing recomputes these
-numbers in the browser.
+table and the product's Benchmark tab read this file. The browser formats the
+stored metrics and derives ratios such as speedup from the reported QPS values;
+it never re-measures recall or latency.
 
 ## Run
 

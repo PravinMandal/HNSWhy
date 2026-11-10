@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -104,7 +105,17 @@ public:
         if (fd_ < 0) {
             throw ProductError("EXTRACTION_FAILED", "cannot create a temporary PDF file", 422);
         }
-        path_ = buffer.data();
+        // Assigning a path allocates. If it throws, the constructor never
+        // completes and its destructor does not run, so clean up explicitly.
+        try {
+            path_ = buffer.data();
+        } catch (...) {
+            ::close(fd_);
+            fd_ = -1;
+            std::error_code ignored;
+            std::filesystem::remove(buffer.data(), ignored);
+            throw;
+        }
     }
 
     ~PdfTempFile() {
@@ -145,29 +156,52 @@ private:
     std::filesystem::path path_;
 };
 
+std::string shell_quote(std::string_view value) {
+    std::string quoted = "'";
+    for (const char character : value) {
+        if (character == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted.push_back(character);
+        }
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
+struct PipeCloser {
+    void operator()(FILE* pipe) const {
+        if (pipe != nullptr) {
+            ::pclose(pipe);
+        }
+    }
+};
+
 std::string extract_pdf(std::string_view bytes) {
     PdfTempFile file;
     file.write(bytes);
 
     const std::string command =
-        "timeout 30s pdftotext -layout -enc UTF-8 -- '" + file.path().string() +
-        "' - 2>/dev/null";
-    FILE* pipe = ::popen(command.c_str(), "r");
-    if (pipe == nullptr) {
+        "timeout 30s pdftotext -layout -enc UTF-8 -- " + shell_quote(file.path().string()) +
+        " - 2>/dev/null";
+    FILE* raw_pipe = ::popen(command.c_str(), "r");
+    if (raw_pipe == nullptr) {
         throw ProductError("EXTRACTION_FAILED",
                            "pdftotext is not available; install poppler-utils", 422);
     }
+    // Own the pipe so an allocation failure while appending output cannot leak
+    // the child process or its file descriptor.
+    std::unique_ptr<FILE, PipeCloser> pipe(raw_pipe);
 
     std::string output;
     std::array<char, 8192> buffer{};
-    while (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+    while (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) != nullptr) {
         output.append(buffer.data());
         if (output.size() > 32U * 1024U * 1024U) {
-            ::pclose(pipe);
             throw ProductError("DOCUMENT_TOO_LARGE", "extracted PDF text is too large", 422);
         }
     }
-    const int status = ::pclose(pipe);
+    const int status = ::pclose(pipe.release());
     if (status != 0) {
         const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
         if (exit_code == 127) {

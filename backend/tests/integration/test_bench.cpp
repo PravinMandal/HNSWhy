@@ -51,6 +51,16 @@ HNSWHY_TEST(bench_report_writes_stable_json_schema) {
     report.build.rss_after_build_mb = 34.5;
     report.build.peak_rss_mb = 40.0;
 
+    report.provenance.run_id = "20261111T000000Z-abc1234";
+    report.provenance.git_commit = "abc1234";
+    report.provenance.worktree_dirty = true;
+    report.provenance.base_prefix = 123;
+    report.provenance.base_sha256 = "base-hash";
+    report.provenance.queries_sha256 = "queries-hash";
+    report.provenance.ground_truth_ids_sha256 = "ids-hash";
+    report.provenance.ground_truth_distances_sha256 = "dist-hash";
+    report.provenance.cxx_flags_release = "-O3 -DNDEBUG";
+
     hnswhy::MethodReport hnsw;
     hnsw.name = "hnsw";
     hnsw.ef_search = 50;
@@ -91,4 +101,10 @@ HNSWHY_TEST(bench_report_writes_stable_json_schema) {
     CHECK_EQ(root.at("methods")[0].at("latency_ms").at("p95").get<double>(), 0.3);
     CHECK(!root.at("methods")[1].contains("ef_search"));
     CHECK(root.at("environment").contains("cpu"));
+    CHECK_EQ(root.at("provenance").at("run_id").get<std::string>(),
+             std::string("20261111T000000Z-abc1234"));
+    CHECK_EQ(root.at("provenance").at("worktree_dirty").get<bool>(), true);
+    CHECK_EQ(root.at("provenance").at("base_prefix").get<std::size_t>(), std::size_t{123});
+    CHECK_EQ(root.at("provenance").at("cxx_flags_release").get<std::string>(),
+             std::string("-O3 -DNDEBUG"));
 }

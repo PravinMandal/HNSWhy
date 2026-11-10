@@ -16,12 +16,15 @@ export function Topbar({
   menuButtonRef: RefObject<HTMLButtonElement | null>
   mobileOpen: boolean
 }) {
-  const { health, documents, loading, status } = useData()
+  const { health, documents, loading, status, error } = useData()
   const { theme, toggle } = useTheme()
   const online = health?.status === 'ok'
   const degraded = health?.status === 'degraded'
   const connecting = loading && !health && !status
-  const tone = connecting ? 'pending' : online ? 'ok' : degraded ? 'warn' : 'error'
+  // A failed refresh leaves the last successful payload in state. Surface that
+  // as a warning instead of continuing to claim the API is online.
+  const stale = Boolean(error) && !loading
+  const tone = connecting ? 'pending' : stale ? 'warn' : online ? 'ok' : degraded ? 'warn' : 'error'
 
   return (
     <header className="topbar">
@@ -46,13 +49,21 @@ export function Topbar({
 
       <div className="topbar__right">
         <span className={`health-pill health-pill--${tone}`}>
-          <span className="status-dot" />
-          {connecting ? 'Connecting' : online ? 'API online' : degraded ? 'Degraded' : 'Offline'}
+          <span className={`status-dot status-dot--${tone}`} />
+          {connecting
+            ? 'Connecting'
+            : stale
+              ? 'Reconnecting'
+              : online
+                ? 'API online'
+                : degraded
+                  ? 'Degraded'
+                  : 'Offline'}
         </span>
         <span className="topbar__rule" aria-hidden="true" />
         <span className="topbar__documents">
           <Icon name="database" size={14} />
-          {pluralize(documents.length, 'document')}
+          {loading && !status ? 'Loading documents' : pluralize(documents.length, 'document')}
         </span>
         <button
           type="button"

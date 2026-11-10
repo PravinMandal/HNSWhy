@@ -97,6 +97,7 @@ void HNSW::ensureNode(Slot id, int level) {
     level_[id] = static_cast<std::uint8_t>(level);
     deleted_[id] = 0;
     degree0_[id] = 0;
+    in_degree0_[id] = 0;
     upper_[id].assign(static_cast<std::size_t>(level), NeighbourList{});
 }
 
@@ -269,8 +270,19 @@ std::vector<Candidate> HNSW::searchLayer(std::span<const float> query,
 std::vector<Slot> HNSW::selectNeighbours(Slot ref, std::span<const Candidate> candidates,
                                          std::size_t cap) const {
     std::vector<Candidate> sorted(candidates.begin(), candidates.end());
-    std::sort(sorted.begin(), sorted.end(),
-              [](const Candidate& a, const Candidate& b) { return closer(a, b); });
+    std::sort(sorted.begin(), sorted.end(), [](const Candidate& a, const Candidate& b) {
+        if (a.dist != b.dist) {
+            return a.dist < b.dist;
+        }
+        // Exact duplicates are the one tie where the older copy must not win:
+        // every full neighbour would otherwise keep the oldest copies and
+        // reject each new duplicate, leaving it unreachable. Prefer the newest
+        // zero-distance copy so the chain extends forward.
+        if (a.dist == 0.0f) {
+            return a.id > b.id;
+        }
+        return a.id < b.id;
+    });
 
     std::vector<Slot> selected;
     selected.reserve(cap);
@@ -310,13 +322,11 @@ std::vector<Slot> HNSW::selectNeighbours(Slot ref, std::span<const Candidate> ca
 }
 
 void HNSW::connect(Slot id, std::span<const Slot> selected, int layer) {
-    bool kept_back_edge = false;
     for (const Slot neighbour : selected) {
         addNeighbour(id, layer, neighbour);
 
         if (degree(neighbour, layer) < cap(layer)) {
             addNeighbour(neighbour, layer, id);
-            kept_back_edge = true;
             continue;
         }
 
@@ -330,43 +340,38 @@ void HNSW::connect(Slot id, std::span<const Slot> selected, int layer) {
         }
         pool.push_back(Candidate{distanceBetween(neighbour, id), id});
         const std::vector<Slot> kept = selectNeighbours(neighbour, pool, cap(layer));
-        kept_back_edge = kept_back_edge ||
-                         std::find(kept.begin(), kept.end(), id) != kept.end();
         setNeighbours(neighbour, layer, kept);
-    }
-
-    if (layer == 0 && !kept_back_edge) {
-        // The new node became a one-way leaf: every selected neighbour rejected
-        // the back-edge. That is expected for exactly equidistant vectors, but
-        // it disconnects the new node from the entry component.
-        layer0_connected_ = false;
     }
 }
 
 void HNSW::noteEdgeRemoved(Slot target) {
-    if (in_degree0_[target] == 0) {
-        return;
+    if (in_degree0_[target] > 0) {
+        --in_degree0_[target];
     }
-    --in_degree0_[target];
-    if (in_degree0_[target] == 0 && target != entry_) {
-        layer0_connected_ = false;
-    }
+    // Removing any layer-0 edge can split the graph even when the target keeps
+    // other incoming edges. Mark the graph dirty; search recomputes live
+    // reachability before using the approximate path again.
+    layer0_connected_ = false;
+    layer0_dirty_ = true;
 }
 
 void HNSW::recomputeConnectivity() {
-    if (slot_count_ == 0) {
+    if (slot_count_ == 0 || live_count_ == 0) {
         layer0_connected_ = true;
+        layer0_dirty_ = false;
         return;
     }
     std::vector<std::uint8_t> seen(slot_count_, 0);
     std::vector<Slot> stack;
     stack.push_back(entry_);
     seen[entry_] = 1;
-    std::size_t reached = 0;
+    std::size_t reached_live = 0;
     while (!stack.empty()) {
         const Slot current = stack.back();
         stack.pop_back();
-        ++reached;
+        if (!deleted_[current]) {
+            ++reached_live;
+        }
         for (const Slot neighbour : neighbours(current, 0)) {
             if (!seen[neighbour]) {
                 seen[neighbour] = 1;
@@ -374,23 +379,8 @@ void HNSW::recomputeConnectivity() {
             }
         }
     }
-    layer0_connected_ = reached == slot_count_;
-}
-
-void HNSW::prune(Slot id, int layer, std::size_t limit) {
-    if (degree(id, layer) <= limit) {
-        return;
-    }
-
-    const std::span<const Slot> current = neighbours(id, layer);
-    std::vector<Candidate> candidates;
-    candidates.reserve(current.size());
-    for (const Slot neighbour : current) {
-        candidates.push_back(Candidate{distanceBetween(id, neighbour), neighbour});
-    }
-
-    const std::vector<Slot> selected = selectNeighbours(id, candidates, limit);
-    setNeighbours(id, layer, selected);
+    layer0_connected_ = reached_live == live_count_;
+    layer0_dirty_ = false;
 }
 
 void HNSW::insert(Slot id) {
@@ -443,6 +433,15 @@ void HNSW::insert(Slot id) {
         entry_ = id;
         top_level_ = level;
     }
+
+    // A successful insert only proves the new node can be reached from the
+    // layer-0 beam entry. Upper-layer descent may have chosen that entry from a
+    // different part of the graph than entry_, so this does not prove every
+    // live node is reachable from entry_ along layer-0 edges. Mark the cached
+    // reachability stale; the next search recomputes it once. A wrong
+    // "connected" answer would skip the exact fallback and could return a
+    // truncated or incorrect top-k.
+    layer0_dirty_ = true;
 }
 
 void HNSW::build() {
@@ -462,6 +461,10 @@ void HNSW::remove(Slot id) {
     if (deleted_[id] == 0) {
         deleted_[id] = 1;
         --live_count_;
+        // Removal tombstones the node but keeps its edges, so the graph can
+        // only become more reachable. Re-check before the next search instead
+        // of leaving a disconnected flag stuck on forever.
+        layer0_dirty_ = true;
     }
 }
 
@@ -480,6 +483,9 @@ SearchResult HNSW::search(std::span<const float> query, std::size_t k, std::size
     if (query.size() != store_.dim()) {
         throw std::invalid_argument("HNSW::search: query dimension mismatch");
     }
+    if (layer0_dirty_) {
+        recomputeConnectivity();
+    }
 
     const std::uint64_t distances_before = distance_computations_;
     const std::uint64_t hops_before = hops_;
@@ -489,6 +495,7 @@ SearchResult HNSW::search(std::span<const float> query, std::size_t k, std::size
     // neighbours. Fall back to an exact scan for those degenerate graphs so
     // results stay exact and prefix-consistent across k.
     if (!layer0_connected_) {
+        ++result.stats.exact_fallbacks;
         std::vector<Candidate> all;
         all.reserve(live_count_);
         for (Slot id = 0; id < slot_count_; ++id) {
@@ -528,6 +535,7 @@ SearchResult HNSW::search(std::span<const float> query, std::size_t k, std::size
     // (min(k, live) results) without turning normal searches into a scan.
     const std::size_t target = std::min(k, live_count_);
     if (candidates.size() < target) {
+        ++result.stats.exact_fallbacks;
         std::vector<std::uint8_t> seen(slot_count_, 0);
         for (const Candidate& candidate : candidates) {
             seen[candidate.id] = 1;
@@ -571,7 +579,9 @@ std::size_t HNSW::reachableCount(int layer) const {
         if (level_[current] < layer) {
             continue;
         }
-        ++reached;
+        if (deleted_[current] == 0) {
+            ++reached;
+        }
         for (const Slot neighbour : neighbours(current, layer)) {
             if (!seen[neighbour]) {
                 seen[neighbour] = 1;

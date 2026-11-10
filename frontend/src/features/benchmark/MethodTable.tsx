@@ -1,19 +1,6 @@
 import type { BenchMethod } from '../../api/types'
 import { formatNumber, formatPercent } from '../../lib/format'
-
-function efOf(method: BenchMethod): number {
-  return method.ef_search ?? 0
-}
-
-function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms)) {
-    return '—'
-  }
-  if (ms >= 1000) {
-    return `${(ms / 1000).toFixed(2)} s`
-  }
-  return `${ms.toFixed(ms < 10 ? 2 : 1)} ms`
-}
+import { efOf, formatDuration } from './metrics'
 
 export function MethodTable({
   methods,

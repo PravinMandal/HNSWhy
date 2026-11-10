@@ -1,4 +1,6 @@
+#include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <vector>
@@ -201,6 +203,29 @@ HNSWHY_TEST(api_validates_bad_requests_and_unknown_documents) {
     CHECK_EQ(body_of(response)["error"]["code"], std::string("HTTP_ERROR"));
 }
 
+HNSWHY_TEST(api_rejects_non_json_content_types) {
+    TempPath db(".db");
+    TempDir dir;
+    ApiFixture fixture(api_config(db, dir));
+    httplib::Client client = fixture.client();
+
+    auto response = client.Post("/api/ask", "{}", "text/plain");
+    CHECK(response);
+    CHECK_EQ(response->status, 415);
+    CHECK_EQ(body_of(response)["error"]["code"], std::string("UNSUPPORTED_MEDIA_TYPE"));
+
+    response = client.Post("/api/documents", "text=hello", "application/x-www-form-urlencoded");
+    CHECK(response);
+    CHECK_EQ(response->status, 415);
+
+    // Parameters on the media type are fine; only the type itself matters.
+    response = client.Post("/api/ask", json{{"question", ""}}.dump(),
+                           "application/json; charset=utf-8");
+    CHECK(response);
+    CHECK_EQ(response->status, 400);
+    CHECK_EQ(body_of(response)["error"]["code"], std::string("INVALID_REQUEST"));
+}
+
 HNSWHY_TEST(api_accepts_multipart_uploads) {
     TempPath db(".db");
     TempDir dir;
@@ -238,6 +263,34 @@ HNSWHY_TEST(api_accepts_multipart_uploads) {
     };
     response = client.Post("/api/documents", missing);
     CHECK_EQ(response->status, 400);
+}
+
+HNSWHY_TEST(api_accepts_multipart_pdf_uploads) {
+    const std::filesystem::path path =
+        std::filesystem::path(HNSWHY_TEST_FIXTURES_DIR) / "pdf-text.pdf";
+    std::ifstream input(path, std::ios::binary);
+    CHECK(input.good());
+    const std::string bytes{std::istreambuf_iterator<char>(input),
+                            std::istreambuf_iterator<char>()};
+
+    TempPath db(".db");
+    TempDir dir;
+    ApiFixture fixture(api_config(db, dir));
+    httplib::Client client = fixture.client();
+
+    httplib::MultipartFormDataItems items;
+    items.push_back(httplib::MultipartFormData{"file", bytes, "paper.pdf", "application/pdf"});
+    items.push_back(httplib::MultipartFormData{"title", "PDF paper", "", ""});
+    const auto response = client.Post("/api/documents", items);
+    CHECK(response);
+    CHECK_EQ(response->status, 201);
+    CHECK_EQ(body_of(response)["document"]["source"], std::string("paper.pdf"));
+
+    const json detail = body_of(
+        client.Get("/api/documents/" +
+                   std::to_string(body_of(response)["document"]["id"].get<hnswhy::Id>())));
+    CHECK(detail["text"].get<std::string>().find("HNSWhy PDF extraction fixture.") !=
+          std::string::npos);
 }
 
 HNSWHY_TEST(api_serves_the_benchmark_report_when_present) {

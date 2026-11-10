@@ -654,6 +654,56 @@ Deleting a sample document is permanent for that database.
 
 ---
 
+## D30 — One server process owns the database
+
+**Decision.** `DocumentStore` takes an exclusive non-blocking `flock` on `<db>.lock`
+for the process lifetime. A second process that opens the same database fails at
+startup with a clear message. The descriptor is opened `O_CLOEXEC` and the lock file
+is `0600`.
+
+**Why.** SQLite tolerates concurrent writers, but the in-memory HNSW graph does not:
+each process would index only the rows it knew about and return stale neighbours. The
+graph is an acceleration structure, not a cache that can be shared through SQLite.
+
+**Consequences.** Tests that reopen the same database must close the first
+`Application`; `test_persistence` does. Read-only inspection of a live database uses
+`sqlite3` directly, which is unaffected by the advisory lock.
+
+---
+
+## D31 — A disconnected graph falls back to exact search
+
+**Decision.** `HNSW` caches whether layer 0 reaches every live node. After any insert
+or removed edge the cache is invalidated. If a search finds the graph disconnected, it
+scans the live vectors exactly and reports `SearchStats::exact_fallbacks`.
+
+**Why.** Tombstones and pruning can strand a component without breaking the graph's
+structural invariants. Returning a silently truncated neighbour list would make recall
+look fine on average and fail on the one query that matters.
+
+**Consequences.** Recall cannot collapse on a damaged graph; worst-case latency for
+that query is an exact scan. Tests assert the counter, and the regression test on seed
+6942 reproduces the old stale-cache failure.
+
+---
+
+## D32 — Inputs are validated at the boundary
+
+**Decision.** The API returns 415 when `/api/ask` or a JSON upload carries a
+non-JSON `Content-Type`. Benchmark numeric flags accept decimal digits only and reject
+`--ef 0`. The ground-truth cache is stamped with SHA-256 hashes of the base, query,
+prefix, and `k`, so a changed input invalidates it.
+
+**Why.** Parsing an arbitrary body as JSON produces confusing 400s, and a stale
+ground-truth file would make the benchmark compare against the wrong answer key while
+still printing a plausible recall number.
+
+**Consequences.** Clients must send `Content-Type: application/json` for JSON bodies;
+multipart uploads are unaffected. Changing the dataset or `k` costs one ground-truth
+recomputation, which is the correct trade.
+
+---
+
 ## How to use this file
 
 1. Before adding a feature, check D20. If it is on the cut list, stop.

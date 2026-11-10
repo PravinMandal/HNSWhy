@@ -98,6 +98,7 @@ HNSWHY_TEST(sift10k_fixture_hnsw_meets_recall_gate) {
     for (std::size_t q = 0; q < queries.n; ++q) {
         const hnswhy::SearchResult result = index.search(queries.row(q), 10, 50);
         CHECK_EQ(result.ids.size(), std::size_t{10});
+        CHECK_EQ(result.stats.exact_fallbacks, std::uint32_t{0});
         recall1_sum += hnswhy::tie_aware_recall_at_k(result.distances, truth_distances.row(q), 1);
         recall10_sum += hnswhy::tie_aware_recall_at_k(result.distances, truth_distances.row(q), 10);
     }
@@ -105,7 +106,8 @@ HNSWHY_TEST(sift10k_fixture_hnsw_meets_recall_gate) {
     const double mean_r10 = recall10_sum / static_cast<double>(queries.n);
     std::cout << "  sift10k fixture HNSW: R@1 " << mean_r1 << ", R@10 " << mean_r10 << "\n";
 
-    CHECK(mean_r1 >= 0.90);
-    CHECK(mean_r10 >= 0.90);
+    // Observed on the shipped fixture: R@1 0.997, R@10 0.9963.
+    CHECK(mean_r1 >= 0.99);
+    CHECK(mean_r10 >= 0.99);
     index.validate();
 }

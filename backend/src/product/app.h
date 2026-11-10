@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -37,6 +38,7 @@ struct StatusView {
     std::size_t index_live = 0;
     std::size_t index_slots = 0;
     std::size_t index_tombstones = 0;
+    std::size_t index_rebuilds = 0;
     std::size_t dim = 0;
     std::size_t embedding_dim = 0;
     std::string embedding_provider;
@@ -87,16 +89,30 @@ public:
     const AppConfig& config() const noexcept { return config_; }
 
 private:
+    // Validated, chunked and embedded document, ready to be written. Building
+    // it calls the embedding provider and is deliberately lock-free; only the
+    // short database/index write in insert_document_locked needs the mutex.
+    struct PreparedDocument {
+        std::string title;
+        std::string source;
+        std::string text;
+        std::vector<NewChunk> chunks;
+    };
+
     void initialize();
-    DocumentSummary add_document_locked(std::string title, std::string source,
-                                        std::string text);
+    PreparedDocument prepare_document(std::string title, std::string source,
+                                      std::string text);
+    DocumentSummary insert_document_locked(PreparedDocument document);
     void build_index_from_chunks_locked(const std::vector<EmbeddedChunk>& chunks);
     void rebuild_index_locked();
     void reembed_all_locked();
-    std::vector<std::vector<float>> embed_all_locked(
+    std::vector<std::vector<float>> embed_all(
         const std::vector<std::string>& texts) const;
     void ensure_embedding_compatibility_locked(std::size_t actual_dim);
-    void seed_sample_locked();
+    // Returns true when seeding finished, including the no-files case. False
+    // means sample files existed but none loaded, so the next startup should
+    // try again instead of marking initialization complete.
+    bool seed_sample_locked();
     void log(const std::string& message) const;
 
     AppConfig config_;
@@ -106,6 +122,14 @@ private:
     VectorIndex index_;
     RagService rag_;
     mutable std::mutex mutex_;
+
+    // /api/health probes each provider over HTTP. Cache the result briefly so a
+    // dashboard poll loop cannot spend four seconds per request when a provider
+    // is down, and so probes never contend with the content mutex.
+    mutable std::mutex probe_mutex_;
+    std::chrono::steady_clock::time_point providers_checked_at_{};
+    bool providers_embedding_available_ = false;
+    bool providers_chat_available_ = false;
 };
 
 }  // namespace hnswhy

@@ -134,7 +134,9 @@ HNSWHY_TEST(application_uploads_asks_maps_and_deletes) {
     CHECK_EQ(after_delete.store.documents, std::size_t{0});
     CHECK_EQ(after_delete.store.chunks, std::size_t{0});
     CHECK_EQ(after_delete.index_live, std::size_t{0});
-    CHECK(after_delete.index_slots >= added.chunk_count);
+    // Deleting the last document triggers compaction, which rebuilds the index
+    // from SQLite so no tombstones linger.
+    CHECK_EQ(after_delete.index_slots, std::size_t{0});
 
     const hnswhy::RagAnswer refusal = app.ask("What does efSearch control?", 3);
     CHECK_EQ(refusal.answer, std::string(hnswhy::kNoAnswer));
@@ -147,6 +149,29 @@ HNSWHY_TEST(application_uploads_asks_maps_and_deletes) {
     CHECK_EQ(after_add.store.documents, std::size_t{1});
     CHECK_EQ(after_add.index_live, second.chunk_count);
     CHECK_EQ(after_add.index_slots, second.chunk_count);
+}
+
+HNSWHY_TEST(application_uploads_incrementally_without_rebuilding) {
+    TempPath db(".db");
+    TempDir dir;
+    hnswhy::Application app(test_config(db, dir));
+    const std::size_t baseline_rebuilds = app.status().index_rebuilds;
+
+    const hnswhy::DocumentSummary first =
+        app.add_document("First notes", "first.md", kDocumentText);
+    const hnswhy::StatusView after_first = app.status();
+    CHECK_EQ(after_first.index_rebuilds, baseline_rebuilds);
+    CHECK_EQ(after_first.index_slots, first.chunk_count);
+
+    const hnswhy::DocumentSummary second =
+        app.add_document("Second notes", "second.md", kDocumentText);
+    const hnswhy::StatusView after_second = app.status();
+    // The covering requirement is "never rebuild on every upload": a second
+    // upload must append slots, not rebuild the whole graph.
+    CHECK_EQ(after_second.index_rebuilds, baseline_rebuilds);
+    CHECK_EQ(after_second.index_slots, first.chunk_count + second.chunk_count);
+    CHECK_EQ(after_second.index_live, first.chunk_count + second.chunk_count);
+    CHECK_EQ(after_second.index_tombstones, std::size_t{0});
 }
 
 HNSWHY_TEST(application_validates_uploads_and_lookups) {
@@ -188,6 +213,7 @@ HNSWHY_TEST(application_survives_restart_and_rebuilds_index) {
     CHECK(app.delete_document(added.id));
     CHECK(app.list_documents().empty());
     CHECK_EQ(app.status().index_live, std::size_t{0});
+    CHECK_EQ(app.status().index_slots, std::size_t{0});
 }
 
 HNSWHY_TEST(application_reembeds_when_the_embedding_space_changes) {
@@ -292,18 +318,23 @@ HNSWHY_TEST(application_serves_a_benchmark_only_when_the_report_exists) {
     TempDir dir;
     hnswhy::AppConfig config = test_config(db, dir);
 
-    hnswhy::Application app(config);
-    CHECK(!app.benchmark_json().has_value());
-    CHECK(!app.status().benchmark_available);
-
+    // The application holds the database's single-writer lock for its whole
+    // lifetime, so the "missing report" case must open after the first
+    // instance closes. Two live instances on one file would diverge.
     {
-        std::ofstream report(config.bench_report);
-        report << R"({"schema_version":1,"dataset":{"name":"sift100k"}})";
+        hnswhy::Application app(config);
+        CHECK(!app.benchmark_json().has_value());
+        CHECK(!app.status().benchmark_available);
+
+        {
+            std::ofstream report(config.bench_report);
+            report << R"({"schema_version":1,"dataset":{"name":"sift100k"}})";
+        }
+        const auto report = app.benchmark_json();
+        CHECK(report.has_value());
+        CHECK(report->find("sift100k") != std::string::npos);
+        CHECK(app.status().benchmark_available);
     }
-    const auto report = app.benchmark_json();
-    CHECK(report.has_value());
-    CHECK(report->find("sift100k") != std::string::npos);
-    CHECK(app.status().benchmark_available);
 
     config.bench_report = dir.path() / "missing.json";
     hnswhy::Application missing(config);

@@ -60,6 +60,26 @@ HNSWHY_TEST(vector_index_rejects_bad_inputs) {
     CHECK_THROWS_AS(index.search(wrong_query, 1, 16), hnswhy::ProductError);
 }
 
+HNSWHY_TEST(vector_index_rejects_a_duplicate_mid_batch_without_mutating) {
+    hnswhy::VectorIndex index;
+    index.rebuild({{1, {1.0f, 0.0f}}});
+
+    // The duplicate is the second record: validation must run over the whole
+    // batch before the first record reaches the store or graph.
+    CHECK_THROWS_AS(index.add({{2, {0.0f, 1.0f}}, {2, {1.0f, 1.0f}}}),
+                    hnswhy::ProductError);
+    CHECK_EQ(index.live(), std::size_t{1});
+    CHECK_EQ(index.slot_count(), std::size_t{1});
+    CHECK(!index.slot_for_chunk(2).has_value());
+
+    // A collision with an existing chunk id must also leave the batch untouched.
+    CHECK_THROWS_AS(index.add({{3, {0.0f, 1.0f}}, {1, {1.0f, 1.0f}}}),
+                    hnswhy::ProductError);
+    CHECK_EQ(index.live(), std::size_t{1});
+    CHECK(!index.slot_for_chunk(3).has_value());
+    index.validate();
+}
+
 HNSWHY_TEST(vector_index_maps_after_deletion_and_rebuild) {
     hnswhy::VectorIndex index;
     index.rebuild({{5, {1.0f, 0.0f}}, {6, {0.0f, 1.0f}}});

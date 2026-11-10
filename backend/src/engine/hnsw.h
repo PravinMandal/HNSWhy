@@ -48,9 +48,12 @@ public:
     //
     // HNSW can leave parts of the graph unreachable when many vectors are
     // exactly equidistant (duplicates, one-hot data). The graph tracks layer-0
-    // connectivity; while it is disconnected, search merges the graph result
-    // with an exact scan of the live slots so the returned top-k stays exact
-    // and consistent across k. Connected graphs use the normal HNSW path.
+    // connectivity over live nodes; while it is disconnected, search falls
+    // back to an exact scan so the returned top-k stays exact. Connectivity is
+    // recomputed lazily after every insertion and every removed edge, so a
+    // cached "connected" answer cannot outlive a structural change. On
+    // degenerate data the fallback lasts as long as the live set stays
+    // disconnected; it is not a temporary error.
     SearchResult search(std::span<const float> query, std::size_t k, std::size_t ef);
 
     // Throws std::runtime_error on a structural invariant violation (degree
@@ -58,9 +61,9 @@ public:
     // be graph-reachable; see search().
     void validate() const;
 
-    // Number of live-or-deleted nodes reachable from the entry point on the
-    // given layer. Tests use this to prove that pruning keeps both clusters
-    // connected; it is O(N * M).
+    // Number of live nodes reachable from the entry point on the given layer.
+    // Tests use this to prove that pruning keeps both clusters connected; it is
+    // O(N * M).
     std::size_t reachableCount(int layer) const;
 
     // Exposed so tests can exercise the prune rule directly.
@@ -97,7 +100,6 @@ private:
                                        std::span<const Slot> entries, std::size_t ef, int layer,
                                        bool liveOnly);
     void connect(Slot id, std::span<const Slot> selected, int layer);
-    void prune(Slot id, int layer, std::size_t limit);
     void recomputeConnectivity();
     void noteEdgeRemoved(Slot target);
 
@@ -122,6 +124,7 @@ private:
     std::vector<std::uint32_t> level_count_;
     std::vector<std::uint32_t> in_degree0_;
     bool layer0_connected_ = true;
+    bool layer0_dirty_ = false;
 
     std::size_t slot_count_ = 0;
     std::size_t live_count_ = 0;

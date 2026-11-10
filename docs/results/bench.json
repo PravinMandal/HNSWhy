@@ -1,8 +1,8 @@
 {
   "build": {
-    "build_time_ms": 36125.570553,
-    "peak_rss_mb": 92.54296875,
-    "rss_after_build_mb": 88.0390625
+    "build_time_ms": 38595.003966,
+    "peak_rss_mb": 92.75390625,
+    "rss_after_build_mb": 88.359375
   },
   "config": {
     "M": 16,
@@ -16,9 +16,10 @@
     "warmup_queries": 200
   },
   "dataset": {
-    "base_bytes": 516000000,
+    "base_bytes": 51200000,
     "base_count": 100000,
     "base_file": "data/sift/sift_base.fvecs",
+    "base_file_bytes": 516000000,
     "dim": 128,
     "ground_truth_file": "data/sift100k/gt_ids.ivecs",
     "ground_truth_k": 100,
@@ -40,97 +41,108 @@
     "hostname": "pravinmandal",
     "os": "Linux 7.2.11-arch1-1"
   },
-  "generated_at_utc": "2026-11-10T14:04:58Z",
+  "generated_at_utc": "2026-11-10T21:19:21Z",
   "methods": [
     {
-      "avg_distance_computations": 325.1268,
+      "avg_distance_computations": 322.3267,
       "ef_search": 10,
       "latency_ms": {
-        "mean": 0.04700482783333321,
-        "p50": 0.046264,
-        "p95": 0.065457,
-        "p99": 0.075821
+        "mean": 0.04896506796666656,
+        "p50": 0.047826,
+        "p95": 0.068886,
+        "p99": 0.081582
       },
       "name": "hnsw",
-      "qps": 21274.410440258132,
+      "qps": 20422.722596459163,
       "queries_measured": 30000,
-      "recall_at_1": 0.8747,
-      "recall_at_10": 0.7998000000000266
+      "recall_at_1": 0.8779,
+      "recall_at_10": 0.7989000000000284
     },
     {
-      "avg_distance_computations": 474.9098,
+      "avg_distance_computations": 470.6266,
       "ef_search": 20,
       "latency_ms": {
-        "mean": 0.0728783764333331,
-        "p50": 0.073472,
-        "p95": 0.095668,
-        "p99": 0.108572
+        "mean": 0.07511710913333319,
+        "p50": 0.074404,
+        "p95": 0.101869,
+        "p99": 0.128853
       },
       "name": "hnsw",
-      "qps": 13721.491187646989,
+      "qps": 13312.546389731207,
       "queries_measured": 30000,
-      "recall_at_1": 0.9562,
-      "recall_at_10": 0.9126400000000652
+      "recall_at_1": 0.9558,
+      "recall_at_10": 0.9123300000000666
     },
     {
-      "avg_distance_computations": 879.6268,
+      "avg_distance_computations": 872.3549,
       "ef_search": 50,
       "latency_ms": {
-        "mean": 0.14502386373333387,
-        "p50": 0.148568,
-        "p95": 0.183996,
-        "p99": 0.205938
+        "mean": 0.1668665448333347,
+        "p50": 0.167022,
+        "p95": 0.229737,
+        "p99": 0.277039
       },
       "name": "hnsw",
-      "qps": 6895.4168938622,
+      "qps": 5992.8130051400885,
       "queries_measured": 30000,
-      "recall_at_1": 0.9926,
-      "recall_at_10": 0.9839100000000438
+      "recall_at_1": 0.9927,
+      "recall_at_10": 0.9836300000000453
     },
     {
-      "avg_distance_computations": 1464.7993,
+      "avg_distance_computations": 1453.8663,
       "ef_search": 100,
       "latency_ms": {
-        "mean": 0.2508517159000002,
-        "p50": 0.258343,
-        "p95": 0.322313,
-        "p99": 0.354646
+        "mean": 0.2810092053333335,
+        "p50": 0.28523,
+        "p95": 0.381527,
+        "p99": 0.426303
       },
       "name": "hnsw",
-      "qps": 3986.418814845344,
+      "qps": 3558.6022842696507,
       "queries_measured": 30000,
-      "recall_at_1": 0.9986,
-      "recall_at_10": 0.996720000000012
+      "recall_at_1": 0.9985,
+      "recall_at_10": 0.996620000000013
     },
     {
-      "avg_distance_computations": 2443.3393,
+      "avg_distance_computations": 2426.7249,
       "ef_search": 200,
       "latency_ms": {
-        "mean": 0.43795848826666667,
-        "p50": 0.44953,
-        "p95": 0.576726,
-        "p99": 0.645523
+        "mean": 0.4486272969999994,
+        "p50": 0.458402,
+        "p95": 0.60125,
+        "p99": 0.674641
       },
       "name": "hnsw",
-      "qps": 2283.3214260962427,
+      "qps": 2229.021744078139,
       "queries_measured": 30000,
       "recall_at_1": 0.9998,
-      "recall_at_10": 0.999580000000002
+      "recall_at_10": 0.9995600000000021
     },
     {
       "avg_distance_computations": 100000.0,
       "latency_ms": {
-        "mean": 5.167971176300005,
-        "p50": 5.048984,
-        "p95": 5.682063,
-        "p99": 6.520745
+        "mean": 5.169657225799969,
+        "p50": 5.112462,
+        "p95": 5.435787,
+        "p99": 6.244371
       },
       "name": "bruteforce",
-      "qps": 193.4995312253168,
+      "qps": 193.43642263346712,
       "queries_measured": 10000,
       "recall_at_1": 1.0,
       "recall_at_10": 1.0
     }
   ],
+  "provenance": {
+    "base_prefix": 100000,
+    "base_sha256": "21f66e2975057b5728ba56de1c825bac4f4d89d596609ae985741c6242631816",
+    "cxx_flags_release": "-O3 -DNDEBUG",
+    "git_commit": "a71674ee971b2b78e584deb17a01d2d5af42cd1e",
+    "ground_truth_distances_sha256": "7db2048e07d94c6a705099f645b8294342c285e0cc733f8192c2dfc647e10476",
+    "ground_truth_ids_sha256": "e6779be7593f8751855b98be2579ef76cd8cef7f03edcb87122d8e357caed9c2",
+    "queries_sha256": "f7fc9be140accdfd64116c2fa2365ecdb69b8f084970c6b0532db5ff79ac8fdc",
+    "run_id": "20261110T211719Z-a71674e",
+    "worktree_dirty": true
+  },
   "schema_version": 1
 }

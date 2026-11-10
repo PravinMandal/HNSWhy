@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useToast } from '../app/ToastProvider'
 import { Icon } from './Icon'
 
@@ -10,10 +11,17 @@ const toneIcon = {
 export function ToastViewport() {
   const { toasts, dismissToast } = useToast()
 
-  return (
+  // The application root is marked inert while a modal is open. Portaling the
+  // viewport to <body> keeps upload errors and confirmations announceable.
+  return createPortal(
     <div className="toast-viewport" aria-live="polite" aria-atomic="false">
       {toasts.map((toast) => (
-        <div key={toast.id} className={`toast toast--${toast.tone}`} role="status">
+        <div
+          key={toast.id}
+          className={`toast toast--${toast.tone}`}
+          role={toast.tone === 'error' ? 'alert' : 'status'}
+          aria-atomic="true"
+        >
           <span className="toast__icon">
             <Icon name={toneIcon[toast.tone]} size={16} />
           </span>
@@ -31,6 +39,7 @@ export function ToastViewport() {
           </button>
         </div>
       ))}
-    </div>
+    </div>,
+    document.body,
   )
 }

@@ -115,6 +115,8 @@ export interface LatencyStats {
   p50: number
   p95: number
   p99: number
+  min?: number
+  max?: number
 }
 
 export interface BenchMethod {
@@ -145,7 +147,19 @@ export interface BenchReport {
     queries_file: string
     ground_truth_file: string
     base_bytes?: number
+    base_file_bytes?: number
     queries_bytes?: number
+  }
+  provenance?: {
+    run_id: string
+    git_commit: string
+    worktree_dirty: boolean
+    base_prefix: number
+    base_sha256: string
+    queries_sha256: string
+    ground_truth_ids_sha256: string
+    ground_truth_distances_sha256: string
+    cxx_flags_release: string
   }
   config: {
     M: number

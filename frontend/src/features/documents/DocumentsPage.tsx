@@ -106,29 +106,32 @@ export function DocumentsPage() {
         <MetricCard
           icon="layers"
           label="Chunks"
-          value={formatNumber(status?.store.chunks ?? 0)}
+          // Unknown values render as an em dash rather than a misleading zero.
+          value={status ? formatNumber(status.store.chunks) : '—'}
           detail="retrieval units"
         />
         <MetricCard
           icon="database"
           label="Live vectors"
-          value={formatNumber(status?.index.live ?? 0)}
+          value={status ? formatNumber(status.index.live) : '—'}
           detail={
-            status?.index.tombstones
-              ? `${formatNumber(status.index.tombstones)} tombstones`
-              : 'indexed in memory'
+            !status
+              ? 'waiting for the server'
+              : status.index.tombstones
+                ? `${formatNumber(status.index.tombstones)} tombstones`
+                : 'indexed in memory'
           }
           tone="accent"
         />
         <MetricCard
           icon="grid"
           label="Dimensions"
-          value={status?.embedding.dim ?? 0}
+          value={status ? String(status.embedding.dim) : '—'}
           detail={status ? `${status.embedding.provider} · ${status.embedding.model}` : 'provider pending'}
         />
       </div>
 
-      {status?.sample_loaded && documents.length > 0 ? (
+      {documents.some((document) => document.source === 'sample') ? (
         <div className="sample-notice">
           <span className="sample-notice__icon">
             <Icon name="sparkles" size={18} />
@@ -181,16 +184,20 @@ export function DocumentsPage() {
             ))}
           </div>
         ) : documents.length === 0 ? (
-          <EmptyState
-            icon="upload"
-            title="Build your first knowledge base"
-            description="Upload a PDF, a Markdown file, or paste text. It will be chunked, embedded, and ready to question in seconds."
-            action={
-              <Button variant="primary" onClick={() => setUploadOpen(true)} icon={<Icon name="plus" size={16} />}>
-                Add your first document
-              </Button>
-            }
-          />
+          // When the request failed, the ErrorNotice above already explains the
+          // empty list; an "upload your first document" prompt would be wrong.
+          error ? null : (
+            <EmptyState
+              icon="upload"
+              title="Build your first knowledge base"
+              description="Upload a PDF, a Markdown file, or paste text. It will be chunked, embedded, and ready to question in seconds."
+              action={
+                <Button variant="primary" onClick={() => setUploadOpen(true)} icon={<Icon name="plus" size={16} />}>
+                  Add your first document
+                </Button>
+              }
+            />
+          )
         ) : filtered.length === 0 ? (
           <EmptyState
             icon="search"

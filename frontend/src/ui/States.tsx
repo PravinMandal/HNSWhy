@@ -56,9 +56,9 @@ export function ErrorNotice({
   )
 }
 
-export function InlineError({ children }: { children: ReactNode }) {
+export function InlineError({ children, id }: { children: ReactNode; id?: string }) {
   return (
-    <p className="inline-error" role="alert">
+    <p className="inline-error" role="alert" id={id}>
       <Icon name="alert" size={15} />
       {children}
     </p>

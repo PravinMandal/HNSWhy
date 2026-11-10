@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -41,13 +42,37 @@ struct RagAnswer {
     std::string chat_model;
 };
 
+// Everything the retrieval phase needs from the question embedding step. It
+// deliberately contains no store/index references so the embedding HTTP call
+// can run before the application takes its database mutex.
+struct RagQuery {
+    std::string question;
+    std::vector<float> query_vector;
+    RagTimings timings;
+    std::chrono::steady_clock::time_point started_at;
+};
+
 class RagService {
 public:
     RagService(const DocumentStore& store, VectorIndex& index,
                const EmbeddingProvider& embedder, const ChatProvider& chat,
                std::size_t ef_search = 50);
 
+    // Convenience path for tests and single-threaded callers. Application uses
+    // the three phases below so slow provider calls never hold the mutex.
     RagAnswer ask(std::string_view question, std::size_t k);
+
+    // Phase 1: validate the question and call the embedding provider. Cheap to
+    // run outside any lock.
+    RagQuery embed_question(std::string_view question) const;
+
+    // Phase 2: search the index and read the matching chunks. The caller must
+    // hold the application mutex.
+    RagAnswer retrieve(const RagQuery& query, std::size_t k);
+
+    // Phase 3: call the chat provider using the already-copied sources. The
+    // caller must not hold the mutex.
+    RagAnswer generate(const RagQuery& query, RagAnswer answer) const;
 
 private:
     const DocumentStore& store_;

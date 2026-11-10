@@ -158,11 +158,89 @@
 }
 
 .answer-text {
+  max-width: 76ch;
   padding: 22px 22px 18px;
   font-size: 15px;
   line-height: 1.72;
   color: var(--ink);
-  white-space: pre-wrap;
+}
+
+.answer-text > :first-child {
+  margin-top: 0;
+}
+
+.answer-text > :last-child {
+  margin-bottom: 0;
+}
+
+.answer-text p {
+  margin: 0 0 0.7em;
+}
+
+.answer-text ul,
+.answer-text ol {
+  margin: 0 0 0.7em;
+  padding-left: 1.35em;
+}
+
+.answer-text li + li {
+  margin-top: 0.2em;
+}
+
+.answer-text h1,
+.answer-text h2,
+.answer-text h3,
+.answer-text h4 {
+  margin: 1em 0 0.35em;
+  font-family: var(--font-sans);
+  font-size: 1.02em;
+  font-weight: 600;
+}
+
+.answer-text code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+}
+
+.answer-text pre {
+  margin: 0 0 0.8em;
+  padding: 12px 14px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
+.answer-text pre code {
+  padding: 0;
+  background: none;
+}
+
+.answer-text blockquote {
+  margin: 0 0 0.8em;
+  padding-left: 14px;
+  border-left: 2px solid var(--line-strong);
+  color: var(--ink-3);
+}
+
+.answer-text a {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.answer-warning {
+  margin: 16px 22px 0;
+  padding: 10px 13px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.55;
 }
 
 .citation {
@@ -616,7 +694,8 @@
 
 .pipeline-step.is-active {
   border-color: var(--accent);
-  color: var(--accent);
+  /* accent-strong keeps the 9.5px label above 4.5:1 on accent-soft. */
+  color: var(--accent-strong);
   background: var(--accent-soft);
 }
 

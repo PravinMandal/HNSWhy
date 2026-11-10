@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { api } from '../../api/client'
 import { useData } from '../../app/DataProvider'
 import { useToast } from '../../app/ToastProvider'
+import { scrollBehavior } from '../../lib/motion'
 import { Button } from '../../ui/Button'
 import { EmptyState, ErrorNotice, Skeleton } from '../../ui/States'
 import { Icon } from '../../ui/Icon'
@@ -9,20 +10,34 @@ import { PageHeader } from '../../ui/PageHeader'
 import { AnswerView } from './AnswerView'
 import { AskComposer } from './AskComposer'
 
-const SUGGESTIONS = [
+// These prompts only make sense while the bundled starter corpus is present.
+const SAMPLE_SUGGESTIONS = [
   'How does HNSW search work?',
   'How does HNSWhy keep SQLite and the index consistent?',
   'What do the benchmark numbers mean?',
-  'How are answers grounded and cited?',
+  'How are answers cited?',
 ]
 
-function AnswerSkeleton() {
+const GENERAL_SUGGESTIONS = [
+  'What topics do these documents cover?',
+  'Summarize the most important ideas.',
+  'Which passages explain how search or retrieval works?',
+  'What should I read first?',
+]
+
+function AnswerSkeleton({
+  title = 'Retrieving and composing',
+  label = 'Generating an answer',
+}: {
+  title?: string
+  label?: string
+}) {
   return (
-    <div className="answer-skeleton" aria-busy="true" aria-label="Generating an answer">
+    <div className="answer-skeleton" role="status" aria-busy="true" aria-label={label}>
       <div className="answer-skeleton__head">
         <span className="spinner" />
         <div>
-          <strong>Retrieving and grounding</strong>
+          <strong>{title}</strong>
           <span>Embedding the question, searching HNSW, then generating an answer.</span>
         </div>
       </div>
@@ -77,12 +92,19 @@ export function AskPage({
       const response = await api.ask(trimmed, k)
       setLastAnswer(response, trimmed)
       window.requestAnimationFrame(() => {
-        resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        const result = resultRef.current
+        result?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' })
+        // Move focus to the answer heading so screen-reader users hear that the
+        // request finished instead of staying on the submit button.
+        result?.querySelector<HTMLElement>('#answer-heading')?.focus({ preventScroll: true })
       })
     } catch (requestError) {
       const message =
         requestError instanceof Error ? requestError.message : 'The question could not be answered.'
       setError(message)
+      // A previous answer belongs to a different question; keeping it on screen
+      // after a failure would suggest the new question had been answered.
+      setLastAnswer(null)
       pushToast({ tone: 'error', title: 'Question failed', message })
     } finally {
       busyRef.current = false
@@ -101,7 +123,7 @@ export function AskPage({
       <PageHeader
         eyebrow="Retrieval"
         title="Ask your knowledge base"
-        description="Questions are embedded, matched against the HNSW index, and answered only from the retrieved chunks. Every claim carries a source number."
+        description="Questions are embedded, matched against the HNSW index, and answered from the retrieved chunks. Answers cite their sources, and every retrieved passage is shown below for checking."
         actions={
           lastAnswer ? (
             <Button variant="ghost" onClick={clear} icon={<Icon name="close" size={15} />}>
@@ -124,11 +146,16 @@ export function AskPage({
 
       {loadError && documents.length === 0 ? (
         <ErrorNotice message={loadError} retry={() => void refreshAll()} />
+      ) : loading && documents.length === 0 ? (
+        <AnswerSkeleton
+          title="Loading your library"
+          label="Loading documents before asking a question"
+        />
       ) : !loading && documents.length === 0 ? (
         <EmptyState
           icon="documents"
           title="Your library is empty"
-          description="Add a document first. HNSWhy needs a corpus before it can retrieve grounded evidence."
+          description="Add a document first. HNSWhy needs a corpus before it can retrieve relevant passages."
           action={
             <Button variant="primary" onClick={onOpenDocuments} icon={<Icon name="plus" size={16} />}>
               Add documents
@@ -158,7 +185,10 @@ export function AskPage({
             </p>
           </div>
           <div className="suggestion-grid">
-            {SUGGESTIONS.map((suggestion) => (
+            {(documents.some((document) => document.source === 'sample')
+              ? SAMPLE_SUGGESTIONS
+              : GENERAL_SUGGESTIONS
+            ).map((suggestion) => (
               <button
                 key={suggestion}
                 type="button"

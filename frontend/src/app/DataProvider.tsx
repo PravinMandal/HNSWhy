@@ -23,7 +23,6 @@ interface DataValue {
   refreshing: boolean
   error: string | null
   refreshAll: () => Promise<boolean>
-  refreshDocuments: () => Promise<void>
   lastAnswer: AskResponse | null
   lastQuestion: string
   setLastAnswer: (answer: AskResponse | null, question?: string) => void
@@ -90,10 +89,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const [storedAnswer, setStoredAnswer] = useState<StoredAnswer | null>(readStoredAnswer)
 
-  const refreshDocuments = useCallback(async () => {
-    setDocuments(await api.documents())
-  }, [])
-
   const refreshAll = useCallback(async (): Promise<boolean> => {
     setRefreshing(true)
     const [statusResult, healthResult, documentsResult] = await Promise.allSettled([
@@ -159,7 +154,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
       refreshing,
       error,
       refreshAll,
-      refreshDocuments,
       lastAnswer: storedAnswer?.answer ?? null,
       lastQuestion: storedAnswer?.question ?? '',
       setLastAnswer,
@@ -172,7 +166,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
       refreshing,
       error,
       refreshAll,
-      refreshDocuments,
       storedAnswer,
       setLastAnswer,
     ],

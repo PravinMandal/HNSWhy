@@ -5,11 +5,8 @@ import { Badge } from '../../ui/Badge'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
 import { MetricCard } from '../../ui/PageHeader'
-import { formatDuration, formatRate, ReportDetails } from './ReportDetails'
-
-function efOf(method: { ef_search?: number }): number {
-  return method.ef_search ?? 0
-}
+import { ReportDetails } from './ReportDetails'
+import { efOf, formatDuration, formatRate } from './metrics'
 
 export function BenchmarkReport({ report, onRefresh }: { report: BenchReport; onRefresh: () => void }) {
   const hnsw = useMemo(
@@ -28,7 +25,7 @@ export function BenchmarkReport({ report, onRefresh }: { report: BenchReport; on
   const speedup = active && brute && brute.qps > 0 ? active.qps / brute.qps : null
   const recallRetention =
     active && brute && brute.recall_at_10 > 0 ? active.recall_at_10 / brute.recall_at_10 : null
-  const latencyReduction =
+  const p50Speedup =
     active && brute && active.latency_ms.p50 > 0 && brute.latency_ms.p50 > 0
       ? brute.latency_ms.p50 / active.latency_ms.p50
       : null
@@ -62,6 +59,12 @@ export function BenchmarkReport({ report, onRefresh }: { report: BenchReport; on
           <span>{formatNumber(report.dataset.query_count)} queries</span>
           <span className="report-meta__sep">/</span>
           <span>{report.dataset.dim}-d</span>
+          {report.provenance?.run_id ? (
+            <>
+              <span className="report-meta__sep">/</span>
+              <span title="Benchmark run identifier">run {report.provenance.run_id}</span>
+            </>
+          ) : null}
         </div>
         <div className="report-meta__right">
           <span>Generated {new Date(report.generated_at_utc).toLocaleString()}</span>
@@ -76,7 +79,9 @@ export function BenchmarkReport({ report, onRefresh }: { report: BenchReport; on
 
       <section className="report-hero" aria-label="Headline results">
         <div className="report-hero__intro">
-          <span className="eyebrow">HNSW at efSearch {activeEf}</span>
+          <span className="eyebrow">
+            {activeEf !== null ? `HNSW at efSearch ${activeEf}` : 'HNSW'}
+          </span>
           <h2>
             <span>{active ? formatPercent(active.recall_at_10, 2) : '—'}</span> recall@10
           </h2>
@@ -119,7 +124,7 @@ export function BenchmarkReport({ report, onRefresh }: { report: BenchReport; on
         activeEf={activeEf}
         speedup={speedup}
         recallRetention={recallRetention}
-        latencyReduction={latencyReduction}
+        p50Speedup={p50Speedup}
         onSelectEf={setEf}
       />
 

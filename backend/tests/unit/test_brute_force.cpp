@@ -70,6 +70,19 @@ HNSWHY_TEST(bruteforce_k_zero_is_empty) {
     CHECK(brute_force.search(std::span<const float>(query), 0).ids.empty());
 }
 
+HNSWHY_TEST(bruteforce_empty_store_returns_empty_for_any_query) {
+    // An empty store has no dimension yet. Asking it for neighbours is not a
+    // dimension error; it simply has nothing to return, like HNSW::search.
+    const hnswhy::VectorStore store;
+    const hnswhy::BruteForce brute_force(store);
+    const std::array<float, 3> query{1.0f, 2.0f, 3.0f};
+
+    const hnswhy::SearchResult result = brute_force.search(std::span<const float>(query), 5);
+    CHECK(result.ids.empty());
+    CHECK(result.distances.empty());
+    CHECK_EQ(result.stats.distance_computations, std::uint64_t{0});
+}
+
 HNSWHY_TEST(bruteforce_rejects_query_dimension_mismatch) {
     const hnswhy::VectorStore store = make_store();
     const hnswhy::BruteForce brute_force(store);

@@ -45,9 +45,9 @@ public:
     std::size_t dim() const noexcept;
     std::size_t live() const noexcept;
     std::size_t slot_count() const noexcept;
-    std::size_t memory_slots() const noexcept;
-    const HNSWParams& params() const noexcept { return params_; }
-    const HNSW* hnsw() const noexcept { return hnsw_.get(); }
+    // Number of full rebuilds since construction. Uploads must use add(), so
+    // tests assert this stays constant across a successful upload.
+    std::size_t rebuild_count() const noexcept;
 
     void validate() const;
 
@@ -57,6 +57,7 @@ private:
     std::unique_ptr<HNSW> hnsw_;
     std::vector<Id> slot_to_chunk_;
     std::unordered_map<Id, Slot> chunk_to_slot_;
+    std::size_t rebuild_count_ = 0;
 };
 
 }  // namespace hnswhy

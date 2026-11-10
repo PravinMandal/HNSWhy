@@ -20,6 +20,8 @@ struct LatencySummary {
     double p50 = 0.0;
     double p95 = 0.0;
     double p99 = 0.0;
+    double min = 0.0;
+    double max = 0.0;
 };
 
 LatencySummary summarize_latency(std::vector<double> samples_ms);

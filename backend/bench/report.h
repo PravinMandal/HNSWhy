@@ -15,7 +15,10 @@ struct DatasetReport {
     std::string base_file;
     std::size_t base_count = 0;
     std::size_t dim = 0;
+    // Loaded prefix bytes and the full source file size are different when the
+    // benchmark uses only the first N vectors of a larger .fvecs file.
     std::uintmax_t base_bytes = 0;
+    std::uintmax_t base_file_bytes = 0;
     std::string queries_file;
     std::size_t query_count = 0;
     std::uintmax_t queries_bytes = 0;
@@ -29,6 +32,21 @@ struct BuildReport {
     double peak_rss_mb = 0.0;
 };
 
+// Identifies the exact inputs and checkout that produced a report. The shell
+// driver fills these values so the benchmark binary does not need to shell out
+// to git or hash files itself.
+struct ProvenanceReport {
+    std::string run_id;
+    std::string git_commit;
+    bool worktree_dirty = false;
+    std::size_t base_prefix = 0;
+    std::string base_sha256;
+    std::string queries_sha256;
+    std::string ground_truth_ids_sha256;
+    std::string ground_truth_distances_sha256;
+    std::string cxx_flags_release;
+};
+
 struct MethodReport {
     std::string name;
     std::size_t ef_search = 0;
@@ -38,6 +56,14 @@ struct MethodReport {
     double qps = 0.0;
     LatencySummary latency_ms;
     double avg_distance_computations = 0.0;
+};
+
+// The exact baseline is also a correctness check: if brute force disagrees
+// with the stored ground-truth distances, the whole report is untrustworthy.
+struct ExactCheckReport {
+    bool checked = false;
+    double max_distance_error = 0.0;
+    double tolerance = 1e-4;
 };
 
 struct BenchConfigReport {
@@ -56,6 +82,8 @@ struct BenchReport {
     DatasetReport dataset;
     BenchConfigReport config;
     BuildReport build;
+    ProvenanceReport provenance;
+    ExactCheckReport exact_check;
     std::vector<MethodReport> methods;
 };
 

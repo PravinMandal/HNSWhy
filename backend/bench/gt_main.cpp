@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "bench/cli.h"
 #include "bench/fvecs.h"
 #include "bench/ground_truth.h"
 
@@ -44,9 +45,9 @@ Options parse(int argc, char** argv) {
         } else if (arg == "--out-dist") {
             options.out_dist = value();
         } else if (arg == "--n") {
-            options.n = std::stoull(value());
+            options.n = hnswhy::bench::parse_size(value(), "--n");
         } else if (arg == "--k") {
-            options.k = std::stoull(value());
+            options.k = hnswhy::bench::parse_size(value(), "--k");
         } else {
             usage(argv[0]);
         }
@@ -54,6 +55,9 @@ Options parse(int argc, char** argv) {
     if (options.base.empty() || options.queries.empty() || options.out_ids.empty() ||
         options.out_dist.empty()) {
         usage(argv[0]);
+    }
+    if (options.k == 0) {
+        throw std::invalid_argument("k must be positive");
     }
     return options;
 }
@@ -68,9 +72,9 @@ void ensure_parent(const std::filesystem::path& path) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    const Options options = parse(argc, argv);
-
     try {
+        const Options options = parse(argc, argv);
+
         const auto start = std::chrono::steady_clock::now();
 
         const hnswhy::VectorStore base = hnswhy::load_fvecs_store(options.base, options.n);

@@ -350,6 +350,11 @@ Open the connection with `PRAGMA foreign_keys = ON`; SQLite does not enforce the
 cascade rules by default. Without it, deleting a document would leave orphan chunks and
 embeddings.
 
+The store also takes an exclusive advisory lock on `<db>.lock` for its lifetime.
+Two server processes on one SQLite file would each keep a private in-memory index
+and silently diverge, so the second opener fails fast. The lock descriptor is
+`O_CLOEXEC` so a spawned `pdftotext` child cannot inherit and hold it.
+
 `chunks.id` is the external chunk ID. Engine slots are runtime-only: on startup, chunks
 are loaded in ID order and assigned slots `0..n-1`; the in-memory `slot_to_chunk_`
 vector is the mapping. Slots may change across restarts, which is fine because the
@@ -424,8 +429,12 @@ stretch item with its own decision and corruption test.
 - **Store.** One flat `std::vector<float>`. Slot `i` starts at `i * dim`. No
   per-vector allocation. `VectorStore` is the only owner of float data.
 - **Brute force.** Scan every slot in the store, keep a max-heap of size `k`. This is
-  the answer key for recall, tests, and benchmark ground truth. The product always
-  searches HNSW; brute force is not a second product path.
+  the answer key for recall, tests, and benchmark ground truth. The product searches
+  HNSW, not brute force as a second path. If a built graph's layer 0 is disconnected,
+  `HNSW::search` falls back to an exact scan of live vectors so recall does not
+  silently collapse; the fallback is a repair path, not the normal path. The cached
+  connectivity answer is invalidated after every insert and every removed edge, so a
+  stale "connected" flag cannot skip the fallback.
 - **HNSW.** Layered proximity graph. Layer 0 contains every node; upper layers are
   sparse shortcuts. Greedy descent above layer 0, beam search at layer 0.
 - **Layer 0 storage.** `N * M0` `uint32_t` links plus a `uint16_t` degree per node.
@@ -484,8 +493,8 @@ honesty mechanism: a user can open the chunk that supposedly supports the senten
 
 ### 6.3 Map
 
-1. Backend samples up to 1,200 live chunks and returns their vectors plus document
-   metadata.
+1. Backend samples live chunks and returns their vectors plus document metadata.
+   The API default is 800 with a cap of 2,000; the frontend requests 1,200.
 2. Frontend fits a three-component PCA with NIPALS power iteration, then normalizes
    the corpus coordinates into the viewport.
 3. The user can switch between a 2D SVG view and a 3D canvas view, pan or orbit,
@@ -737,10 +746,11 @@ URLs. Ollama is optional at runtime.
 | `test_distance` | squared L2, normalization, and invalid-dimension handling |
 | `test_vector_store` | add/get/reserve; dimension checks; contiguous storage |
 | `test_brute_force` | exact top-k; ties deterministic by slot |
-| `test_hnsw` | insert/search, insertion orders, duplicates, empty graphs, invariants |
+| `test_hnsw` | insert/search, insertion orders, duplicates, empty graphs, stale-connectivity regression, invariants |
 | `test_prune` | two-cluster diversity test; nearest-only disconnects, heuristic keeps a bridge |
 | `test_delete` | tombstones never returned; traversal survives; entry/top-layer safety |
 | `test_metrics` | recall and latency percentiles |
+| `test_framework` | `CHECK_NEAR` rejects NaN and infinity |
 
 ### 11.2 Product tests
 
@@ -752,8 +762,10 @@ URLs. Ollama is optional at runtime.
 | `test_vector_index` | slot mapping, incremental insert, tombstone delete, rebuild |
 | `test_rag` | retrieval, grounded prompt, citations, refusal |
 | `test_persistence` | insert -> restart -> rebuild -> same results; sample seeded once |
-| `test_api` | upload/ask/map/delete flow, multipart, validation, errors |
+| `test_api` | upload/ask/map/delete flow, multipart, PDF, 415 validation, errors |
 | `test_bench` | fvecs/ivecs parsing, report schema |
+| `test_cli` | benchmark numeric parsing rejects signs, junk, and overflow |
+| `test_config` | M0 derivation, environment overrides, API-key scoping |
 
 ### 11.3 CI and sanitizers
 
@@ -761,10 +773,19 @@ URLs. Ollama is optional at runtime.
 `ctest`; a second job runs `npm ci`, `npm test`, and `npm run build` for the frontend.
 The committed sift10k fixture gate always runs. Siftsmall integration tests skip
 unless `HNSWHY_SIFTSMALL_DIR` points at a local dataset. Release verification on this
-machine runs the same suite with `HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall"`: **107/107
-pass**.
+machine runs the same suite with `HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall"`:
+**143/143 pass**. The frontend suite is **55 tests in 15 files**.
 
 The `dev` preset enables ASan and UBSan. The full suite is sanitizer-clean.
+
+### 11.4 End-to-end
+
+`scripts/e2e/run.sh` builds if needed, starts the real server on a fresh SQLite
+database, runs `api-e2e.sh` (25 HTTP checks), then runs `ui-e2e.cjs` (16 browser
+checks) and stops the server. The browser suite uses the built `frontend/dist`
+bundle, not the Vite dev server, and asserts that the production stylesheet is
+loaded. Screenshots and logs are written under `$OUT`; the committed evidence is
+in `docs/results/e2e/`.
 
 ---
 
@@ -800,7 +821,7 @@ measured separately. Do not mix them.
 | Persistence | SQLite source of truth; incremental insert; tombstones; rebuild on startup |
 | Engine | flat store, squared L2, brute force, HNSW insert/search/prune, mark-deleted |
 | Evidence | SIFT-100k, 10k queries, 3 passes per curve point, `bench.json`, README table |
-| Safety | 107 tests, two-cluster test, siftsmall recall gate, persistence test, ASan/UBSan |
+| Safety | 143 tests, two-cluster test, siftsmall recall gate, persistence test, ASan/UBSan, 25 API + 16 browser E2E checks |
 | Ops | documented local run, `.env.example`, sample KB, no auth |
 
 ### Stretch (after v1)

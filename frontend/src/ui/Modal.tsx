@@ -25,11 +25,14 @@ export function Modal({
   size = 'md',
   busy = false,
   initialFocusRef,
+  describedBy,
 }: {
   open: boolean
   onClose: () => void
   title: string
   description?: string
+  /** Id of body content that should be announced as the dialog description. */
+  describedBy?: string
   children: ReactNode
   footer?: ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
@@ -55,6 +58,15 @@ export function Modal({
     const previousFocus = document.activeElement as HTMLElement | null
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
+
+    // The dialog is portaled to <body>, so inert the application root while it
+    // is open. This removes background content from the accessibility tree and
+    // stops programmatic focus from escaping the dialog.
+    const root = document.getElementById('root')
+    const rootWasInert = root?.hasAttribute('inert') ?? false
+    if (root && !rootWasInert) {
+      root.setAttribute('inert', '')
+    }
 
     const target = initialFocusRef?.current ?? focusableInside(panelRef.current)[0]
     target?.focus()
@@ -89,6 +101,9 @@ export function Modal({
     return () => {
       document.removeEventListener('keydown', onKeyDown)
       document.body.style.overflow = previousOverflow
+      if (root && !rootWasInert) {
+        root.removeAttribute('inert')
+      }
       previousFocus?.focus()
     }
   }, [open, initialFocusRef])
@@ -114,7 +129,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
+        aria-describedby={description ? descriptionId : describedBy}
       >
         <header className="dialog__header">
           <div className="dialog__heading">
@@ -157,6 +172,7 @@ export function ConfirmDialog({
   busy?: boolean
   tone?: 'danger' | 'primary'
 }) {
+  const copyId = useId()
   return (
     <Modal
       open={open}
@@ -164,6 +180,7 @@ export function ConfirmDialog({
       title={title}
       size="sm"
       busy={busy}
+      describedBy={copyId}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
@@ -175,7 +192,9 @@ export function ConfirmDialog({
         </>
       }
     >
-      <div className="dialog-copy">{description}</div>
+      <div id={copyId} className="dialog-copy">
+        {description}
+      </div>
     </Modal>
   )
 }

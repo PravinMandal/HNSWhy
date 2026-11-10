@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   fileKind,
-  formatBytes,
   formatCompact,
   formatMs,
   formatNumber,
@@ -37,16 +36,6 @@ describe('formatMs', () => {
     expect(formatMs(0.1486)).toBe('0.149 ms')
     expect(formatMs(4.2)).toBe('4.20 ms')
     expect(formatMs(42.25)).toBe('42.3 ms')
-  })
-})
-
-describe('formatBytes', () => {
-  it('scales to binary units and rejects empty values', () => {
-    expect(formatBytes(0)).toBe('—')
-    expect(formatBytes(-1)).toBe('—')
-    expect(formatBytes(512)).toBe('512 B')
-    expect(formatBytes(1536)).toBe('1.5 KB')
-    expect(formatBytes(92.54 * 1024 * 1024)).toBe('92.5 MB')
   })
 })
 

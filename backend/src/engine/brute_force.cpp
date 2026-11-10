@@ -17,13 +17,15 @@ bool ascending(const Candidate& a, const Candidate& b) {
 }  // namespace
 
 SearchResult BruteForce::search(std::span<const float> query, std::size_t k) const {
-    if (query.size() != store_.dim()) {
-        throw std::invalid_argument("BruteForce::search: query dimension mismatch");
-    }
-
     SearchResult result;
+    // An empty store has no dimension to compare against. It is not a caller
+    // error: asking an empty index for neighbours simply returns none, which
+    // matches HNSW::search.
     if (k == 0 || store_.size() == 0) {
         return result;
+    }
+    if (query.size() != store_.dim()) {
+        throw std::invalid_argument("BruteForce::search: query dimension mismatch");
     }
 
     const std::size_t want = std::min(k, store_.size());

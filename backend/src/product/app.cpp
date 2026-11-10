@@ -22,6 +22,17 @@ constexpr std::size_t kMaxSourceChars = 300;
 constexpr std::size_t kEmbedBatch = 32;
 constexpr std::size_t kMapPreviewBytes = 320;
 
+// Full graph validation walks every edge, which is O(N * M0^2) and too costly
+// on every upload/delete at large N. Debug builds and tests keep the check;
+// release relies on insert/remove invariants plus the startup rebuild.
+void validate_after_mutation(const VectorIndex& index) {
+#ifndef NDEBUG
+    index.validate();
+#else
+    (void)index;
+#endif
+}
+
 std::string preview(std::string_view text, std::size_t limit = kMapPreviewBytes) {
     return truncate_utf8_words(text, limit);
 }
@@ -59,7 +70,7 @@ void Application::log(const std::string& message) const {
     std::cerr << "[hnswhy] " << message << '\n';
 }
 
-std::vector<std::vector<float>> Application::embed_all_locked(
+std::vector<std::vector<float>> Application::embed_all(
     const std::vector<std::string>& texts) const {
     std::vector<std::vector<float>> result;
     result.reserve(texts.size());
@@ -140,37 +151,39 @@ void Application::ensure_embedding_compatibility_locked(std::size_t actual_dim) 
     }
 }
 
-DocumentSummary Application::add_document_locked(std::string title, std::string source,
-                                                 std::string text) {
-    title = trim_copy(title);
-    source = trim_copy(source);
-    text = trim_copy(normalize_newlines(text));
+Application::PreparedDocument Application::prepare_document(std::string title,
+                                                             std::string source,
+                                                             std::string text) {
+    PreparedDocument prepared;
+    prepared.title = trim_copy(title);
+    prepared.source = trim_copy(source);
+    prepared.text = trim_copy(normalize_newlines(text));
 
-    if (title.empty()) {
-        title = title_from_source(source);
+    if (prepared.title.empty()) {
+        prepared.title = title_from_source(prepared.source);
     }
-    if (source.empty()) {
-        source = "upload";
+    if (prepared.source.empty()) {
+        prepared.source = "upload";
     }
-    if (!is_valid_utf8(title)) {
+    if (!is_valid_utf8(prepared.title)) {
         throw validation_error("title must be valid UTF-8");
     }
-    if (!is_valid_utf8(source)) {
+    if (!is_valid_utf8(prepared.source)) {
         throw validation_error("source name must be valid UTF-8");
     }
-    if (!is_valid_utf8(text)) {
+    if (!is_valid_utf8(prepared.text)) {
         throw ProductError("INVALID_UTF8", "the document text is not valid UTF-8", 422);
     }
-    if (utf8_length(title) > kMaxTitleChars) {
+    if (utf8_length(prepared.title) > kMaxTitleChars) {
         throw validation_error("title must be at most 200 characters");
     }
-    if (utf8_length(source) > kMaxSourceChars) {
+    if (utf8_length(prepared.source) > kMaxSourceChars) {
         throw validation_error("source name must be at most 300 characters");
     }
-    if (text.empty()) {
+    if (prepared.text.empty()) {
         throw ProductError("EMPTY_DOCUMENT", "the document has no text", 422);
     }
-    if (text.size() > kMaxTextBytes) {
+    if (prepared.text.size() > kMaxTextBytes) {
         throw ProductError("DOCUMENT_TOO_LARGE", "the document text exceeds the 4 MB limit",
                            413);
     }
@@ -178,7 +191,7 @@ DocumentSummary Application::add_document_locked(std::string title, std::string 
     ChunkOptions options;
     options.target_words = config_.chunk_target_words;
     options.overlap_words = config_.chunk_overlap_words;
-    const std::vector<TextChunk> chunks = chunk_text(text, options);
+    const std::vector<TextChunk> chunks = chunk_text(prepared.text, options);
     if (chunks.empty()) {
         throw ProductError("EMPTY_DOCUMENT", "the document has no usable text", 422);
     }
@@ -189,7 +202,9 @@ DocumentSummary Application::add_document_locked(std::string title, std::string 
         chunk_texts.push_back(chunk.text);
     }
 
-    std::vector<std::vector<float>> embeddings = embed_all_locked(chunk_texts);
+    // The embedding provider can do network I/O; this whole phase runs before
+    // the caller takes the application mutex.
+    std::vector<std::vector<float>> embeddings = embed_all(chunk_texts);
     if (embeddings.empty()) {
         throw ProductError("PROVIDER_ERROR", "the embedding provider returned no vectors", 502);
     }
@@ -200,25 +215,34 @@ DocumentSummary Application::add_document_locked(std::string title, std::string 
                                "the embedding provider returned inconsistent dimensions", 502);
         }
     }
-    ensure_embedding_compatibility_locked(actual_dim);
 
-    std::vector<NewChunk> new_chunks;
-    new_chunks.reserve(chunks.size());
+    prepared.chunks.reserve(chunks.size());
     for (std::size_t i = 0; i < chunks.size(); ++i) {
-        new_chunks.push_back(NewChunk{chunks[i].text, std::move(embeddings[i])});
+        prepared.chunks.push_back(NewChunk{chunks[i].text, std::move(embeddings[i])});
     }
+    return prepared;
+}
 
-    const InsertResult inserted =
-        store_.insert_document(title, source, text, new_chunks);
+DocumentSummary Application::insert_document_locked(PreparedDocument document) {
+    // Another upload may have established the embedding space while this
+    // document was being embedded, so compatibility is checked again under the
+    // lock before anything is written.
+    ensure_embedding_compatibility_locked(document.chunks.front().embedding.size());
+
+    const InsertResult inserted = store_.insert_document(
+        document.title, document.source, document.text, document.chunks);
 
     try {
+        if (inserted.chunk_ids.size() != document.chunks.size()) {
+            throw std::runtime_error("document store returned a mismatched chunk count");
+        }
         std::vector<IndexedVector> records;
         records.reserve(inserted.chunk_ids.size());
         for (std::size_t i = 0; i < inserted.chunk_ids.size(); ++i) {
-            records.push_back(IndexedVector{inserted.chunk_ids[i], new_chunks[i].embedding});
+            records.push_back(IndexedVector{inserted.chunk_ids[i], document.chunks[i].embedding});
         }
         index_.add(records);
-        index_.validate();
+        validate_after_mutation(index_);
     } catch (const std::exception& error) {
         log(std::string("incremental index update failed, rebuilding from SQLite: ") +
             error.what());
@@ -234,8 +258,10 @@ DocumentSummary Application::add_document_locked(std::string title, std::string 
 
 DocumentSummary Application::add_document(std::string title, std::string source,
                                            std::string text) {
+    PreparedDocument prepared =
+        prepare_document(std::move(title), std::move(source), std::move(text));
     std::lock_guard<std::mutex> lock(mutex_);
-    return add_document_locked(std::move(title), std::move(source), std::move(text));
+    return insert_document_locked(std::move(prepared));
 }
 
 std::vector<DocumentSummary> Application::list_documents() {
@@ -256,24 +282,60 @@ bool Application::delete_document(Id document_id) {
     }
     try {
         index_.remove(chunk_ids);
-        index_.validate();
+        validate_after_mutation(index_);
     } catch (const std::exception& error) {
         log(std::string("tombstone update failed, rebuilding from SQLite: ") + error.what());
+        rebuild_index_locked();
+        return true;
+    }
+
+    // Tombstones keep their slots and vectors alive. Compact once they are a
+    // meaningful fraction of the library, or when nothing live remains, so a
+    // delete/re-upload loop cannot grow memory without bound.
+    const std::size_t live = index_.live();
+    const std::size_t tombstones =
+        index_.slot_count() >= live ? index_.slot_count() - live : 0;
+    const std::size_t tombstone_limit = std::max<std::size_t>(1024, live / 5);
+    if (live == 0 || tombstones > tombstone_limit) {
+        log("compacting " + std::to_string(tombstones) +
+            " tombstones by rebuilding the index from SQLite");
         rebuild_index_locked();
     }
     return true;
 }
 
 RagAnswer Application::ask(std::string_view question, std::size_t k) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return rag_.ask(question, k);
+    // The embedding and chat providers may perform slow network calls. Only
+    // the retrieval step touches the index and store, so keep the mutex around
+    // that step alone: uploads and deletes stay responsive during generation.
+    const RagQuery query = rag_.embed_question(question);
+    RagAnswer answer;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        answer = rag_.retrieve(query, k);
+        if (answer.sources.empty()) {
+            return answer;
+        }
+    }
+    return rag_.generate(query, std::move(answer));
 }
 
 MapView Application::map(std::size_t limit) {
     if (limit == 0 || limit > 2000) {
         throw validation_error("limit must be between 1 and 2000");
     }
+    // The dimension lives in the index, which uploads and rebuilds mutate.
+    // Take the same lock before reading it so the limit check cannot race
+    // with an incremental insert.
     std::lock_guard<std::mutex> lock(mutex_);
+    const std::size_t dim = index_.dim();
+    if (dim != 0) {
+        // A 4096-dimensional embedding makes the default 1,200 points a
+        // multi-megabyte JSON response. Cap the sampled points by total float
+        // count instead of rejecting the request; the map is a sample anyway.
+        constexpr std::size_t kMaxMapFloats = 400'000;
+        limit = std::min(limit, std::max<std::size_t>(1, kMaxMapFloats / dim));
+    }
     MapView view;
     view.total_chunks = store_.stats().chunks;
     const std::vector<MapChunk> sampled = store_.sample_chunks(limit);
@@ -302,11 +364,14 @@ MapView Application::map(std::size_t limit) {
 StatusView Application::status() {
     std::lock_guard<std::mutex> lock(mutex_);
     StatusView view;
-    view.database = store_.path().string();
+    // The API exposes a filename only. An absolute server path leaks the
+    // deployment's directory layout to every browser that can reach /api.
+    view.database = store_.path().filename().string();
     view.store = store_.stats();
     view.index_live = index_.live();
     view.index_slots = index_.slot_count();
     view.index_tombstones = index_.slot_count() - index_.live();
+    view.index_rebuilds = index_.rebuild_count();
     view.dim = index_.dim();
     view.embedding_dim = index_.dim() != 0 ? index_.dim() : embedder_->dim();
     view.embedding_provider = embedder_->name();
@@ -323,23 +388,34 @@ StatusView Application::status() {
 
 HealthView Application::health() {
     HealthView view;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        try {
-            view.store = store_.stats();
-            view.database = "ok";
-            view.ok = true;
-        } catch (const std::exception&) {
-            view.database = "error";
-            view.ok = false;
-        }
-        view.embedding.provider = embedder_->name();
-        view.embedding.model = embedder_->model();
-        view.chat.provider = chat_->name();
-        view.chat.model = chat_->model();
+    // Health must stay responsive while an upload holds the application mutex.
+    // SQLite is opened in serialized mode and the provider pointers are
+    // immutable after construction, so this read does not need the content
+    // lock.
+    try {
+        view.store = store_.stats();
+        view.database = "ok";
+        view.ok = true;
+    } catch (const std::exception&) {
+        view.database = "error";
+        view.ok = false;
     }
-    view.embedding.available = embedder_->available();
-    view.chat.available = chat_->available();
+    view.embedding.provider = embedder_->name();
+    view.embedding.model = embedder_->model();
+    view.chat.provider = chat_->name();
+    view.chat.model = chat_->model();
+
+    constexpr auto kProbeTtl = std::chrono::seconds(30);
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> probe_lock(probe_mutex_);
+    if (providers_checked_at_.time_since_epoch().count() == 0 ||
+        now - providers_checked_at_ >= kProbeTtl) {
+        providers_embedding_available_ = embedder_->available();
+        providers_chat_available_ = chat_->available();
+        providers_checked_at_ = now;
+    }
+    view.embedding.available = providers_embedding_available_;
+    view.chat.available = providers_chat_available_;
     return view;
 }
 
@@ -403,7 +479,7 @@ void Application::reembed_all_locked() {
     for (const ChunkText& chunk : chunks) {
         texts.push_back(chunk.text);
     }
-    std::vector<std::vector<float>> embeddings = embed_all_locked(texts);
+    std::vector<std::vector<float>> embeddings = embed_all(texts);
     if (embeddings.size() != chunks.size() || embeddings.empty()) {
         throw ProductError("PROVIDER_ERROR",
                            "the embedding provider returned the wrong number of vectors", 502);
@@ -438,20 +514,23 @@ void Application::reembed_all_locked() {
         meta.model);
 }
 
-void Application::seed_sample_locked() {
+bool Application::seed_sample_locked() {
     std::error_code error;
     if (config_.samples_dir.empty() ||
         !std::filesystem::is_directory(config_.samples_dir, error)) {
         log("sample knowledge base directory not found: " + config_.samples_dir.string());
-        return;
+        return true;
     }
 
+    std::filesystem::directory_iterator iterator(config_.samples_dir, error);
+    if (error) {
+        log("cannot read sample knowledge base directory: " + error.message());
+        return false;
+    }
     std::vector<std::filesystem::path> files;
-    for (const auto& entry : std::filesystem::directory_iterator(config_.samples_dir, error)) {
-        if (error) {
-            break;
-        }
-        if (!entry.is_regular_file()) {
+    for (const auto& entry : iterator) {
+        std::error_code entry_error;
+        if (!entry.is_regular_file(entry_error)) {
             continue;
         }
         const std::string extension = entry.path().extension().string();
@@ -460,6 +539,10 @@ void Application::seed_sample_locked() {
         }
     }
     std::sort(files.begin(), files.end());
+    if (files.empty()) {
+        log("sample knowledge base directory is empty");
+        return true;
+    }
 
     std::size_t loaded = 0;
     for (const auto& path : files) {
@@ -483,14 +566,17 @@ void Application::seed_sample_locked() {
                                                  : newline - 2));
         }
         try {
-            add_document_locked(title, "sample", std::move(text));
+            insert_document_locked(prepare_document(title, "sample", std::move(text)));
             ++loaded;
         } catch (const std::exception& exception) {
             log("sample file failed: " + path.filename().string() + ": " + exception.what());
         }
     }
-    store_.set_meta("sample_loaded", "1");
+    if (loaded > 0) {
+        store_.set_meta("sample_loaded", "1");
+    }
     log("seeded sample knowledge base with " + std::to_string(loaded) + " documents");
+    return loaded > 0;
 }
 
 void Application::initialize() {
@@ -498,8 +584,9 @@ void Application::initialize() {
         // Re-embedding starts from chunk text, not from the old embedding
         // rows. That lets it repair missing embeddings and incomplete
         // provider metadata instead of failing before the flag is honored.
+        // reembed_all_locked() already publishes the new graph; rebuilding it
+        // again from SQLite would double startup time for no benefit.
         reembed_all_locked();
-        build_index_from_chunks_locked(store_.load_embedded_chunks());
     } else {
         EmbeddingMeta meta = store_.embedding_meta();
         const std::vector<EmbeddedChunk> chunks = store_.load_embedded_chunks();
@@ -549,15 +636,20 @@ void Application::initialize() {
     const bool initialized = store_.meta("app_initialized").has_value();
     if (!initialized) {
         const StoreStats current = store_.stats();
+        bool seeding_finished = true;
         if (config_.load_sample && current.documents == 0 && current.chunks == 0) {
             if (embedder_->name() == "hash") {
-                seed_sample_locked();
+                seeding_finished = seed_sample_locked();
             } else {
                 log("sample knowledge base skipped because it requires the offline hash "
                     "embedding provider");
             }
         }
-        store_.set_meta("app_initialized", "1");
+        if (seeding_finished) {
+            store_.set_meta("app_initialized", "1");
+        } else {
+            log("sample seeding did not load any documents; retrying on the next startup");
+        }
     }
 
     log("ready: " + std::to_string(store_.stats().documents) + " documents, " +

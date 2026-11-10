@@ -201,6 +201,11 @@
   cursor: pointer;
 }
 
+.chart__hit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .chart__line {
   fill: none;
   stroke-width: 2;

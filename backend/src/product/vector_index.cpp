@@ -4,6 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <utility>
 
 #include "product/errors.h"
@@ -35,9 +36,10 @@ std::size_t common_dimension(const std::vector<IndexedVector>& vectors) {
 VectorIndex::VectorIndex(HNSWParams params) : params_(params) {}
 
 void VectorIndex::rebuild(const std::vector<IndexedVector>& vectors) {
+    ++rebuild_count_;
     if (vectors.empty()) {
-        store_.reset();
         hnsw_.reset();
+        store_.reset();
         slot_to_chunk_.clear();
         chunk_to_slot_.clear();
         return;
@@ -76,16 +78,28 @@ void VectorIndex::add(const std::vector<IndexedVector>& vectors) {
         throw validation_error("embedding dimension does not match the active index");
     }
 
+    // Validate the whole batch before touching the index. A duplicate halfway
+    // through must not leave the earlier records in the store and graph.
+    std::unordered_set<Id> incoming;
+    incoming.reserve(vectors.size());
+    for (const IndexedVector& record : vectors) {
+        if (chunk_to_slot_.count(record.chunk_id) != 0 || !incoming.insert(record.chunk_id).second) {
+            throw validation_error("chunk id already exists in the vector index");
+        }
+    }
+
     if (store_ == nullptr) {
-        store_ = std::make_unique<VectorStore>();
-        store_->reserve(vectors.size(), dim);
-        hnsw_ = std::make_unique<HNSW>(*store_, params_);
+        // Construct both objects locally and publish them only after HNSW
+        // accepts the parameters. Otherwise a bad M/M0 pair leaves store_ set
+        // and hnsw_ null, and the next upload dereferences a null graph.
+        auto store = std::make_unique<VectorStore>();
+        store->reserve(vectors.size(), dim);
+        auto graph = std::make_unique<HNSW>(*store, params_);
+        store_ = std::move(store);
+        hnsw_ = std::move(graph);
     }
 
     for (const IndexedVector& record : vectors) {
-        if (chunk_to_slot_.count(record.chunk_id) != 0) {
-            throw validation_error("chunk id already exists in the vector index");
-        }
         const Slot slot = store_->add(record.embedding);
         slot_to_chunk_.push_back(record.chunk_id);
         chunk_to_slot_.emplace(record.chunk_id, slot);
@@ -155,8 +169,8 @@ std::size_t VectorIndex::slot_count() const noexcept {
     return hnsw_ == nullptr ? 0 : hnsw_->slot_count();
 }
 
-std::size_t VectorIndex::memory_slots() const noexcept {
-    return slot_to_chunk_.size();
+std::size_t VectorIndex::rebuild_count() const noexcept {
+    return rebuild_count_;
 }
 
 void VectorIndex::validate() const {

@@ -1,8 +1,13 @@
 #include "product/document_store.h"
 
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -57,11 +62,20 @@ public:
     Statement(const Statement&) = delete;
     Statement& operator=(const Statement&) = delete;
 
-    void reset() { check_sqlite(db_, sqlite3_reset(stmt_), "reset"); }
+    void reset() {
+        check_sqlite(db_, sqlite3_reset(stmt_), "reset");
+        // Reused statements must not inherit a value bound on the previous
+        // iteration for a parameter the next caller does not set.
+        check_sqlite(db_, sqlite3_clear_bindings(stmt_), "clear bindings");
+    }
 
     void bind_text(int index, std::string_view value) {
+        // A default-constructed string_view has a null data pointer, which
+        // SQLite treats as SQL NULL rather than an empty string. Point empty
+        // values at a real empty buffer so NOT NULL columns stay valid.
+        const char* data = value.empty() ? "" : value.data();
         check_sqlite(db_,
-                     sqlite3_bind_text(stmt_, index, value.data(),
+                     sqlite3_bind_text(stmt_, index, data,
                                        static_cast<int>(value.size()), SQLITE_TRANSIENT),
                      "bind text");
     }
@@ -168,7 +182,10 @@ std::vector<float> read_embedding(const Statement& statement, int dim_column, in
                                   Id chunk_id) {
     const int dim = statement.column_int(dim_column);
     const int bytes = statement.column_bytes(blob_column);
-    if (dim <= 0 || bytes != dim * static_cast<int>(sizeof(float))) {
+    const std::size_t expected_bytes =
+        dim > 0 && dim <= 65536 ? static_cast<std::size_t>(dim) * sizeof(float) : 0;
+    if (dim <= 0 || dim > 65536 || bytes < 0 ||
+        static_cast<std::size_t>(bytes) != expected_bytes) {
         throw std::runtime_error("sqlite: embedding for chunk " + std::to_string(chunk_id) +
                                  " has an invalid dimension or size");
     }
@@ -178,7 +195,7 @@ std::vector<float> read_embedding(const Statement& statement, int dim_column, in
                                  " is null");
     }
     std::vector<float> values(static_cast<std::size_t>(dim));
-    std::memcpy(values.data(), blob, static_cast<std::size_t>(bytes));
+    std::memcpy(values.data(), blob, expected_bytes);
     return values;
 }
 
@@ -194,6 +211,26 @@ DocumentStore::DocumentStore(const std::filesystem::path& path) : path_(path) {
                 throw std::runtime_error("cannot create database directory: " +
                                          parent.string() + ": " + error.message());
             }
+        }
+
+        // One writer per database. O_CLOEXEC matters: pdftotext is spawned
+        // while the server runs and must not inherit (and outlive) the lock.
+        const std::filesystem::path lock_path(path.string() + ".lock");
+        lock_.fd = ::open(lock_path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+        if (lock_.fd < 0) {
+            throw std::runtime_error("cannot open database lock " + lock_path.string() + ": " +
+                                     std::strerror(errno));
+        }
+        if (::flock(lock_.fd, LOCK_EX | LOCK_NB) != 0) {
+            const int saved_errno = errno;
+            ::close(lock_.fd);
+            lock_.fd = -1;
+            if (saved_errno == EWOULDBLOCK) {
+                throw std::runtime_error(
+                    "database is already open by another hnswhy process: " + path.string());
+            }
+            throw std::runtime_error("cannot lock database " + path.string() + ": " +
+                                     std::strerror(saved_errno));
         }
     }
 
@@ -230,11 +267,42 @@ DocumentStore::DocumentStore(const std::filesystem::path& path) : path_(path) {
         db_ = nullptr;
         throw;
     }
+
+    if (path != ":memory:") {
+        // The database holds uploaded document text and embeddings. Restrict
+        // it (and SQLite's sidecar files) to the owner instead of relying on
+        // the process umask, which is commonly 022.
+        const std::filesystem::perms owner_only =
+            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write;
+        for (const std::filesystem::path& file :
+             {path, std::filesystem::path(path.string() + "-wal"),
+              std::filesystem::path(path.string() + "-shm"),
+              std::filesystem::path(path.string() + ".lock")}) {
+            std::error_code error;
+            if (std::filesystem::exists(file, error)) {
+                std::filesystem::permissions(file, owner_only,
+                                             std::filesystem::perm_options::replace, error);
+                if (error) {
+                    sqlite3_close(db_);
+                    db_ = nullptr;
+                    throw std::runtime_error("cannot restrict database permissions: " +
+                                             file.string() + ": " + error.message());
+                }
+            }
+        }
+    }
 }
 
 DocumentStore::~DocumentStore() {
     if (db_ != nullptr) {
         sqlite3_close(db_);
+    }
+}
+
+DocumentStore::FileLock::~FileLock() {
+    if (fd >= 0) {
+        ::flock(fd, LOCK_UN);
+        ::close(fd);
     }
 }
 
@@ -540,8 +608,11 @@ std::vector<MapChunk> DocumentStore::sample_chunks(std::size_t limit) const {
     // Deterministic reservoir sample: one scan, no ORDER BY RANDOM() temp
     // sort under the application mutex. The seed keeps the map stable between
     // requests while still spreading points across the whole library.
+    // Only the preview prefix is needed. Reading full chunk text for every
+    // chunk would copy the entire library under the application mutex just to
+    // keep at most `limit` samples.
     constexpr std::string_view sql = R"sql(
-        SELECT c.id, c.document_id, d.title, c.ordinal, c.text
+        SELECT c.id, c.document_id, d.title, c.ordinal, substr(c.text, 1, 512)
         FROM chunks c JOIN documents d ON d.id = c.document_id
         ORDER BY c.id
     )sql";
@@ -579,24 +650,21 @@ EmbeddingMeta DocumentStore::embedding_meta() const {
         "('embedding_provider', 'embedding_model', 'embedding_dim')";
     Statement statement(db_, sql);
     EmbeddingMeta meta;
-    int fields = 0;
     while (statement.step()) {
         const std::string key = statement.column_text(0);
         const std::string value = statement.column_text(1);
         if (key == "embedding_provider") {
             meta.provider = value;
-            ++fields;
         } else if (key == "embedding_model") {
             meta.model = value;
-            ++fields;
         } else if (key == "embedding_dim") {
             try {
-                const unsigned long long dim = std::stoull(value);
-                if (dim == 0 || dim > 65536) {
+                std::size_t consumed = 0;
+                const unsigned long long dim = std::stoull(value, &consumed);
+                if (consumed != value.size() || dim == 0 || dim > 65536) {
                     throw std::out_of_range("dimension");
                 }
                 meta.dim = static_cast<std::size_t>(dim);
-                ++fields;
             } catch (const std::exception&) {
                 throw std::runtime_error("sqlite: embedding_dim metadata is invalid");
             }
@@ -605,7 +673,6 @@ EmbeddingMeta DocumentStore::embedding_meta() const {
     // Return a partial record rather than throwing. Startup with --reembed
     // can repair incomplete metadata; callers that need a usable embedding
     // space must check complete().
-    (void)fields;
     return meta;
 }
 

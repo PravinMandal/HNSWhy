@@ -16,6 +16,7 @@
 | 5 | Product backend: SQLite, chunking, providers, RAG, HTTP API | done |
 | 6 | Frontend from scratch: Documents, Ask, Map (2D/3D), Benchmark | done |
 | 7 | Sample knowledge base, end-to-end tests, critics, docs, release | done |
+| 8 | Correctness hardening and automated API + browser E2E | done |
 
 ## Environment (verified)
 
@@ -56,13 +57,24 @@
 
 ## Test and verification state
 
-- Release suite: **107/107 passed** (with `HNSWHY_SIFTSMALL_DIR` set).
-- ASan/UBSan suite: **107/107 passed**, no sanitizer reports.
-- Frontend: `tsc --noEmit && vite build` passes; **16/16 Vitest tests passed**.
+- Release suite: **143/143 passed** with `HNSWHY_SIFTSMALL_DIR` set.
+- ASan/UBSan suite: rerun after the final hardening pass; no sanitizer reports.
+- Frontend: `tsc --noEmit` clean; **55/55 Vitest tests in 15 files passed**;
+  `npm run build` succeeds.
+- API end-to-end: **25/25 checks passed** against a fresh database and the real
+  server binary. The suite covers read endpoints, ask, map, benchmark, JSON and
+  multipart uploads, PDF extraction, 400/404/415 paths, deletes, and the
+  single-writer lock.
+- Browser end-to-end: **16/16 checks passed** in headless Chromium against the
+  built frontend. The suite covers Documents, Ask, Map, Benchmark, theme
+  persistence, mobile layout and drawer, skip link, focus trapping, console and
+  network errors, and asserts that the production stylesheet is applied.
+- Evidence and screenshots: `docs/results/e2e/`; raw run log:
+  `docs/results/e2e/run-2026-11-11.log`.
 - Siftsmall gate: R@1 0.99, R@10 0.997 with the default HNSW configuration.
 - Live smoke test on the sample library: ask with citations, 2D/3D map, and
-  benchmark views verified in Chromium and Firefox with no console or page
-  errors.
+  benchmark views are now covered by the automated browser suite instead of a
+  manual check.
 
 ## Log
 
@@ -90,8 +102,8 @@ seeds, insertion-order permutation, `ef < k`, prune rules, deletion of the
 entry point, delete-all then insert, and metrics.
 
 Real-data gate on siftsmall (10k x 128, 100 queries, M=16, M0=32,
-efConstruction=200, efSearch=50): build ~1.38 s, **R@1 0.99, R@10 0.997**,
-p50 ~0.046 ms, p95 ~0.07 ms.
+efConstruction=200, efSearch=50): **R@1 0.99, R@10 0.997** with roughly 1.3–1.7 s
+build, p50 0.05–0.06 ms, and p95 0.08–0.09 ms across local runs.
 
 Two real bugs were found only by the larger data: a back-edge written into a
 full flat row corrupted the next node's adjacency, and duplicate vectors formed
@@ -140,3 +152,36 @@ added for PCA and formatting. Responsive layouts verified at 390, 768, and 1440
 pixels. Map contrast and point sizing tuned for sparse and dense maps. README,
 architecture notes, progress log, `.env.example`, and run scripts updated to the
 shipped code. Full release and sanitizer suites pass.
+
+### Phase 8 — correctness hardening and automated E2E (done)
+A full review pass found and fixed issues that the happy path did not expose:
+
+- **HNSW stale connectivity.** An incremental insert could prune an edge or
+  attach a node to a tombstoned component while the cached layer-0
+  "connected" flag stayed true. Search then skipped the exact fallback and
+  returned a wrong neighbour. Every successful insert now marks the cache
+  dirty; a deterministic regression test reproduces the old failure on seed
+  6942.
+- **Single-writer database lock.** Two server processes on one SQLite file each
+  kept their own in-memory index. `DocumentStore` now takes an exclusive
+  `flock` on `<db>.lock` and refuses a second opener. The descriptor is
+  `O_CLOEXEC` so spawned `pdftotext` cannot inherit it.
+- **API media types.** `/api/ask` and JSON uploads now return 415 for a
+  non-JSON `Content-Type` instead of trying to parse the body as JSON.
+- **Benchmark input validation.** Numeric flags reject signs, whitespace,
+  overflow, and `--ef 0`; the ground-truth cache is stamped with the base,
+  query, prefix, and `k` hashes so a changed input cannot silently reuse a
+  stale answer key.
+- **Startup order.** The server binds its port before opening SQLite and
+  rebuilding the index, so a busy port fails fast.
+- **Re-embed path.** `--reembed` no longer builds the HNSW graph twice.
+- **Empty exact search.** `BruteForce` returns an empty result for an empty
+  store instead of throwing a dimension error.
+- **Test harness.** `CHECK_NEAR` fails on NaN and infinity.
+- **Test isolation.** The benchmark-report persistence test now releases the
+  single-writer lock before opening the same database again.
+
+The new `scripts/e2e/run.sh` starts a fresh server, runs 25 API checks and 16
+browser checks, writes screenshots, and stops the server. `ui-e2e.cjs` asserts
+that the production stylesheet is applied, so a missing CSS asset cannot pass
+as a working page.

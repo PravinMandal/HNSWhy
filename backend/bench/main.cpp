@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "bench/cli.h"
 #include "bench/fvecs.h"
 #include "bench/report.h"
 #include "engine/brute_force.h"
@@ -38,6 +39,16 @@ struct Options {
     std::uint64_t seed = 42;
     std::vector<std::size_t> ef_grid{10, 20, 50, 100, 200};
     bool run_bruteforce = true;
+
+    // Filled by scripts/run_bench.sh so a report identifies its exact inputs.
+    std::string run_id;
+    std::string git_commit;
+    bool worktree_dirty = false;
+    std::string base_sha256;
+    std::string queries_sha256;
+    std::string gt_ids_sha256;
+    std::string gt_dist_sha256;
+    std::string cxx_flags_release;
 };
 
 [[noreturn]] void usage(const char* argv0) {
@@ -54,17 +65,16 @@ struct Options {
         << "  --seed S              level RNG seed (default 42)\n"
         << "  --output FILE         JSON report path (default docs/results/bench.json)\n"
         << "  --dataset-name NAME   label stored in the report\n"
+        << "  --run-id ID           provenance run identifier\n"
+        << "  --git-commit SHA      provenance commit\n"
+        << "  --worktree-dirty      record that the checkout had uncommitted changes\n"
+        << "  --base-sha256 HEX     SHA-256 of the base file\n"
+        << "  --queries-sha256 HEX  SHA-256 of the query file\n"
+        << "  --gt-ids-sha256 HEX   SHA-256 of the ground-truth ids\n"
+        << "  --gt-dist-sha256 HEX  SHA-256 of the ground-truth distances\n"
+        << "  --cxx-flags-release S compiler flags used for this build\n"
         << "  --no-bruteforce       skip the exact baseline\n";
     std::exit(2);
-}
-
-std::size_t parse_size(const std::string& text, const char* flag) {
-    std::size_t consumed = 0;
-    const unsigned long long value = std::stoull(text, &consumed);
-    if (consumed != text.size()) {
-        throw std::invalid_argument(std::string("invalid value for ") + flag + ": " + text);
-    }
-    return static_cast<std::size_t>(value);
 }
 
 std::vector<std::size_t> parse_ef_list(const std::string& text) {
@@ -77,7 +87,13 @@ std::vector<std::size_t> parse_ef_list(const std::string& text) {
         if (token.empty()) {
             throw std::invalid_argument("empty efSearch value");
         }
-        values.push_back(parse_size(token, "--ef"));
+        const std::size_t value = hnswhy::bench::parse_size(token, "--ef");
+        if (value == 0) {
+            // HNSW clamps ef up to k, so accepting 0 would label a run "ef=0"
+            // while actually measuring ef=k. That would make the report lie.
+            throw std::invalid_argument("efSearch must be positive");
+        }
+        values.push_back(value);
         if (comma == std::string::npos) {
             break;
         }
@@ -107,27 +123,43 @@ Options parse(int argc, char** argv) {
         } else if (arg == "--gt-dist") {
             options.gt_dist = value();
         } else if (arg == "--n") {
-            options.n = parse_size(value(), "--n");
+            options.n = hnswhy::bench::parse_size(value(), "--n");
         } else if (arg == "--k") {
-            options.k = parse_size(value(), "--k");
+            options.k = hnswhy::bench::parse_size(value(), "--k");
         } else if (arg == "--ef") {
             options.ef_grid = parse_ef_list(value());
         } else if (arg == "--passes") {
-            options.passes = parse_size(value(), "--passes");
+            options.passes = hnswhy::bench::parse_size(value(), "--passes");
         } else if (arg == "--warmup") {
-            options.warmup = parse_size(value(), "--warmup");
+            options.warmup = hnswhy::bench::parse_size(value(), "--warmup");
         } else if (arg == "--M") {
-            options.M = parse_size(value(), "--M");
+            options.M = hnswhy::bench::parse_size(value(), "--M");
         } else if (arg == "--M0") {
-            options.M0 = parse_size(value(), "--M0");
+            options.M0 = hnswhy::bench::parse_size(value(), "--M0");
         } else if (arg == "--ef-construction") {
-            options.ef_construction = parse_size(value(), "--ef-construction");
+            options.ef_construction = hnswhy::bench::parse_size(value(), "--ef-construction");
         } else if (arg == "--seed") {
-            options.seed = static_cast<std::uint64_t>(parse_size(value(), "--seed"));
+            options.seed = static_cast<std::uint64_t>(hnswhy::bench::parse_size(value(), "--seed"));
         } else if (arg == "--output") {
             options.output = value();
         } else if (arg == "--dataset-name") {
             options.dataset_name = value();
+        } else if (arg == "--run-id") {
+            options.run_id = value();
+        } else if (arg == "--git-commit") {
+            options.git_commit = value();
+        } else if (arg == "--worktree-dirty") {
+            options.worktree_dirty = true;
+        } else if (arg == "--base-sha256") {
+            options.base_sha256 = value();
+        } else if (arg == "--queries-sha256") {
+            options.queries_sha256 = value();
+        } else if (arg == "--gt-ids-sha256") {
+            options.gt_ids_sha256 = value();
+        } else if (arg == "--gt-dist-sha256") {
+            options.gt_dist_sha256 = value();
+        } else if (arg == "--cxx-flags-release") {
+            options.cxx_flags_release = value();
         } else if (arg == "--no-bruteforce") {
             options.run_bruteforce = false;
         } else {
@@ -141,6 +173,11 @@ Options parse(int argc, char** argv) {
     }
     if (options.k == 0 || options.passes == 0 || options.ef_grid.empty()) {
         throw std::invalid_argument("k, passes, and efSearch must be positive");
+    }
+    if (options.k < 10) {
+        // The report always exposes recall_at_10; silently treating k < 10 as
+        // recall@k would make the JSON field lie.
+        throw std::invalid_argument("k must be at least 10 for the report schema");
     }
     return options;
 }
@@ -220,7 +257,9 @@ int main(int argc, char** argv) {
         report.dataset.name = options.dataset_name;
         report.dataset.base_file = options.base.string();
         report.dataset.base_count = base.size();
-        report.dataset.base_bytes = file_size_or_zero(options.base);
+        report.dataset.base_bytes =
+            static_cast<std::uintmax_t>(base.size()) * base.dim() * sizeof(float);
+        report.dataset.base_file_bytes = file_size_or_zero(options.base);
         report.dataset.dim = base.dim();
         report.dataset.queries_file = options.queries.string();
         report.dataset.query_count = queries.n;
@@ -243,6 +282,16 @@ int main(int argc, char** argv) {
 
         report.build.build_time_ms = build_ms;
         report.build.rss_after_build_mb = hnswhy::current_rss_mb();
+
+        report.provenance.run_id = options.run_id;
+        report.provenance.git_commit = options.git_commit;
+        report.provenance.worktree_dirty = options.worktree_dirty;
+        report.provenance.base_prefix = base.size();
+        report.provenance.base_sha256 = options.base_sha256;
+        report.provenance.queries_sha256 = options.queries_sha256;
+        report.provenance.ground_truth_ids_sha256 = options.gt_ids_sha256;
+        report.provenance.ground_truth_distances_sha256 = options.gt_dist_sha256;
+        report.provenance.cxx_flags_release = options.cxx_flags_release;
 
         const std::size_t recall10_k = std::min<std::size_t>(10, options.k);
 
@@ -291,10 +340,11 @@ int main(int argc, char** argv) {
             print_method(method);
         }
 
+        report.exact_check.checked = options.run_bruteforce;
         if (options.run_bruteforce) {
             std::cout << "[bench] exact baseline\n";
             const hnswhy::BruteForce brute_force(base);
-            for (std::size_t w = 0; w < std::min<std::size_t>(options.warmup, 20); ++w) {
+            for (std::size_t w = 0; w < std::min(options.warmup, queries.n); ++w) {
                 (void)brute_force.search(queries.row(w), options.k);
             }
 
@@ -332,7 +382,8 @@ int main(int argc, char** argv) {
                 }
             }
 
-            if (max_gt_distance_error > 1e-4) {
+            report.exact_check.max_distance_error = max_gt_distance_error;
+            if (max_gt_distance_error > report.exact_check.tolerance) {
                 throw std::runtime_error("exact search disagrees with the ground-truth distances");
             }
 

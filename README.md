@@ -60,8 +60,9 @@ Full sweep:
 
 Environment: GCC 16.2.1, `Release -O3`, 12th Gen Intel Core i5-12450H, 12 hardware
 threads, Linux 7.2.11, AVX2 disabled for this run. These are local measurements, not
-cloud numbers. The report records the same fields; nothing is recomputed in the
-browser. When the code or benchmark changes, rerun `scripts/run_bench.sh` and replace
+cloud numbers. The browser formats the stored report and derives ratios such as
+speedup from its reported QPS values; it never re-measures or recomputes recall.
+When the code or benchmark changes, rerun `scripts/run_bench.sh` and replace
 `docs/results/bench.json`; do not edit values by hand.
 
 ---
@@ -121,7 +122,8 @@ hnswhy_engine (static library)
   Deletes mark slots as tombstones; tombstones stay traversable but never appear in
   results.
 - **One mutex serializes document, index, and search operations.** Provider HTTP
-  clients are created per call.
+  clients are created per call. An exclusive `flock` on the database file refuses a
+  second server process, so two in-memory indexes cannot silently diverge.
 - **The benchmark is a CLI.** It never runs inside an HTTP request, so network and
   JSON latency do not contaminate the engine numbers.
 - **The engine is a library.** Server, benchmark, and tests link the same code.
@@ -135,7 +137,7 @@ The full component map, data model, API, and memory budget are in
 
 Prerequisites:
 
-- C++20 compiler (GCC 13+ or Clang 16+), CMake ≥ 3.20, Ninja
+- C++20 compiler (GCC 13+ or Clang 16+), CMake ≥ 3.25 (the presets use schema v6), Ninja
 - SQLite3 development headers
 - Node 20+ and npm
 - `pdftotext` (from Poppler) for PDF uploads
@@ -159,9 +161,9 @@ cd ..
 ./build/backend/hnswhy_server --db data/hnswhy.db --port 8080
 ```
 
-Open <http://127.0.0.1:8080>. On a fresh database the server seeds the sample
-knowledge base from `samples/`. It never overwrites an existing library. Use
-`--no-sample` to start empty.
+Open <http://127.0.0.1:8080>. On a fresh database with the offline hash embedder
+(the default), the server seeds the sample knowledge base from `samples/`. It never
+overwrites an existing library. Use `--no-sample` to start empty.
 
 For frontend development, run the API on port 8080 and Vite separately:
 
@@ -224,7 +226,7 @@ fallback is required.
 ## Tests
 
 ```bash
-# Release suite (107 tests; the committed sift10k fixture always runs,
+# Release suite (143 tests; the committed sift10k fixture always runs,
 # siftsmall runs when the dataset is present)
 HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall" ./build/backend/hns_tests
 
@@ -233,14 +235,21 @@ cmake --preset dev
 cmake --build --preset dev
 HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall" ./build/dev/backend/hns_tests
 
-# Frontend unit tests
+# Frontend unit tests (15 files, 55 tests)
 cd frontend && npm test
+
+# End-to-end: fresh database, real server, real browser
+scripts/e2e/run.sh
 ```
 
 Coverage includes squared-L2 distance, `VectorStore` invariants, exact search,
 HNSW insertion orders, duplicate vectors, pruning, deletion/tombstones, restart
 persistence, chunking, provider behavior, RAG citations, the HTTP API, report schema,
-and real siftsmall recall. The frontend tests cover PCA and formatting helpers.
+and real siftsmall recall. The frontend tests cover routing, the data provider,
+theme persistence, dialogs, formatting, PCA, and page behaviour. The end-to-end
+suite runs 25 API checks and 16 browser checks against a fresh database; it also
+asserts that the production stylesheet is actually applied, so a broken static
+asset cannot pass as a working page.
 
 ---
 

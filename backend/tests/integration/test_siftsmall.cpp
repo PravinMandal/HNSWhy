@@ -18,8 +18,7 @@
 HNSWHY_TEST(siftsmall_bruteforce_matches_shipped_groundtruth) {
     const char* dir = std::getenv("HNSWHY_SIFTSMALL_DIR");
     if (dir == nullptr || *dir == '\0') {
-        std::cout << "  [skip] HNSWHY_SIFTSMALL_DIR is not set\n";
-        return;
+        throw hnswhytest::Skip("HNSWHY_SIFTSMALL_DIR is not set");
     }
 
     const std::filesystem::path root(dir);

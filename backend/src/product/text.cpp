@@ -175,15 +175,30 @@ std::vector<std::string> content_terms(std::string_view text) {
     return filtered;
 }
 
+bool is_sentence_terminator(std::string_view text, std::size_t index) {
+    const char c = text[index];
+    if (c == '\n' || c == '?' || c == '!') {
+        return true;
+    }
+    if (c != '.') {
+        return false;
+    }
+    // A period inside a decimal, version, abbreviation, or domain is not a
+    // sentence boundary. Treat it as one only before whitespace or end of text.
+    if (index + 1 >= text.size()) {
+        return true;
+    }
+    return std::isspace(static_cast<unsigned char>(text[index + 1])) != 0;
+}
+
 std::vector<std::string> split_sentences(std::string_view text) {
     std::vector<std::string> sentences;
     std::size_t begin = 0;
     for (std::size_t i = 0; i < text.size(); ++i) {
-        const char c = text[i];
-        const bool terminator = c == '.' || c == '?' || c == '!' || c == '\n';
-        if (!terminator) {
+        if (!is_sentence_terminator(text, i)) {
             continue;
         }
+        const char c = text[i];
         std::string sentence = trim(text.substr(begin, i + (c == '\n' ? 0 : 1) - begin));
         if (sentence.size() >= 8) {
             sentences.push_back(std::move(sentence));

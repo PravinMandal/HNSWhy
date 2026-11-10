@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import type { Route } from './router'
+import { scrollBehavior } from '../lib/motion'
+import { routeLabels, type Route } from './router'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 
@@ -31,6 +32,27 @@ export function AppShell({
 
   useEffect(() => {
     setMobileOpen(false)
+  }, [route])
+
+  // SPA navigation replaces the whole page, so update the document title and
+  // move focus to the new page heading. Without this, keyboard and screen
+  // reader users stay parked on the sidebar link they just activated.
+  const firstRoute = useRef(true)
+  useEffect(() => {
+    document.title = `${routeLabels[route]} · HNSWhy`
+    if (firstRoute.current) {
+      firstRoute.current = false
+      return
+    }
+    const main = document.getElementById('main-content')
+    const heading = main?.querySelector<HTMLElement>('h1')
+    if (heading) {
+      heading.tabIndex = -1
+      heading.focus({ preventScroll: true })
+    } else {
+      main?.focus({ preventScroll: true })
+    }
+    window.scrollTo({ top: 0, behavior: scrollBehavior() })
   }, [route])
 
   useEffect(() => {
@@ -83,7 +105,18 @@ export function AppShell({
 
   return (
     <div className="shell">
-      <a className="skip-link" href="#main-content">
+      <a
+        className="skip-link"
+        href="#main-content"
+        onClick={(event) => {
+          // The router owns the hash. Treat this as an in-page jump instead of
+          // letting #main-content become an unknown route.
+          event.preventDefault()
+          const main = document.getElementById('main-content')
+          main?.focus()
+          main?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' })
+        }}
+      >
         Skip to content
       </a>
       <Sidebar
@@ -102,7 +135,7 @@ export function AppShell({
           aria-label="Close navigation"
         />
       ) : null}
-      <div className="workspace">
+      <div className="workspace" inert={isMobile && mobileOpen}>
         <Topbar
           route={route}
           onOpenMenu={() => setMobileOpen(true)}

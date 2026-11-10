@@ -107,8 +107,8 @@ If the loader/harness gate fails, stop. Do not tune the graph.
 `data/` is gitignored. The **self-contained CI bundle** is
 `tests/fixtures/sift10k/`: first 10k base (5.1 MB), fixed 1k queries (0.5 MB), GT
 IDs + distances (0.8 MB), query IDs, and SHA-256 (~6.5 MB total). The
-`tests/fixtures/sift100k/` fixture contains GT IDs + distances + query IDs + hashes
-(~8 MB), not the 100k base. A clean clone can run CI from the 10k bundle; a full
+gitignored `data/sift100k/` directory contains the GT IDs, distances, and query
+IDs (~8 MB), not the 100k base. A clean clone can run CI from the 10k bundle; a full
 100k benchmark needs the download script and the local data.
 
 ### 2.2 Why the shipped key is only valid on 1M
@@ -161,7 +161,7 @@ The headline uses distance-threshold recall. ID overlap is diagnostic.
 
 - Headline / README / benchmark tab / resume / SLO: **10,000 queries**.
 - CI smoke: **1,000 fixed queries**, labelled `PRELIMINARY`.
-- Timed passes: **three** over the same build, after a 100-query warmup.
+- Timed passes: **three** over the same build, after a 200-query warmup.
 - Report the mean and the min/max across passes. A 95% bootstrap interval is
   optional in `bench.json`; it is not a gate.
 - `siftsmall`'s 100 queries: loader proof only; no statistical claim.
@@ -330,9 +330,10 @@ items, not v1.
 Schema (same as `ARCHITECTURE.md` §4):
 
 ```sql
-documents(id, title, text, created_at)
-chunks(id, document_id, text, created_at)
+documents(id, title, source, text, created_at)
+chunks(id, document_id, ordinal, text, created_at)
 embeddings(chunk_id, dim, vector BLOB)
+meta(key, value)
 ```
 
 The engine never sees SQL. Engine slots are runtime-only; the product keeps an

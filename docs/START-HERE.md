@@ -98,7 +98,7 @@ version that gives a stranger something to use and a recruiter something to chec
 | Evidence | SIFT-100k, 10k queries, 3 timed passes per curve point, `bench.json` | 1M sweep, multi-metric, KD-tree, cosine index |
 | Showcase | the product UI itself, including the 3D map | static site, trace-replay page |
 | Ops | documented local run, documented Ollama setup | public deployment, Docker, auth gate |
-| Tests | unit/invariant, two-cluster, mark-delete, persistence, API, sift10k fixture, frontend helpers | fuzzing, allocator tests, TSan |
+| Tests | unit/invariant, two-cluster, mark-delete, persistence, API, sift10k fixture, frontend helpers, 25 API + 16 browser E2E checks | fuzzing, allocator tests, TSan |
 
 Why 100k? It is 51.2 MB of vectors, builds in minutes, and lets you iterate. 1M is
 512 MB and makes every brute-force pass and rebuild 10× more expensive. A valid 100k
@@ -151,7 +151,7 @@ ground truth is generated locally by `scripts/run_bench.sh` and stays in gitigno
 | Product works | upload/paste, PDF/TXT/Markdown, list, delete, ask, citations, 2D/3D map, benchmark tab |
 | Persistence works | restart preserves documents and search results; delete survives restart |
 | Engine works | BF = answer key; HNSW recall gate; directed graph; mark-deleted; `validate()` |
-| Tests green | unit/invariant, sift10k fixture, two-cluster, mark-delete, persistence/restart, API, frontend helpers |
+| Tests green | unit/invariant, sift10k fixture, two-cluster, mark-delete, persistence/restart, API, frontend helpers, API + browser E2E |
 | 100k measured | `sift100k` R@10 = 0.9839, 10k queries, 3 timed passes per curve point |
 | Artifact exists | `bench.json` with config, compiler, hardware, dataset, build time, RSS, and trials |
 | README | short documented setup, real numbers, limitations, no placeholders |

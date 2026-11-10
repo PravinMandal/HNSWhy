@@ -46,7 +46,7 @@ export function MapInspector({
 
           <div className="point-detail__badges">
             {sourceIndex >= 0 ? (
-              <Badge tone="accent">citation [{sourceIndex + 1}]</Badge>
+              <Badge tone="accent">retrieved source [{sourceIndex + 1}]</Badge>
             ) : (
               <Badge tone="neutral">not retrieved</Badge>
             )}
@@ -57,18 +57,22 @@ export function MapInspector({
 
           <dl className="point-detail__meta">
             <div>
-              <dt>PC1</dt>
+              <dt>PC1 (scaled)</dt>
               <dd>{coordinates?.[0]?.toFixed(3) ?? '—'}</dd>
             </div>
             <div>
-              <dt>PC2</dt>
+              <dt>PC2 (scaled)</dt>
               <dd>{coordinates?.[1]?.toFixed(3) ?? '—'}</dd>
             </div>
             <div>
-              <dt>PC3</dt>
+              <dt>PC3 (scaled)</dt>
               <dd>{coordinates?.[2]?.toFixed(3) ?? '—'}</dd>
             </div>
           </dl>
+          <p className="point-detail__note">
+            PCA scores are rescaled to a unit view for display, so read relative spacing rather
+            than raw magnitude.
+          </p>
 
           <Button variant="ghost" size="sm" onClick={onClear} icon={<Icon name="close" size={14} />}>
             Clear selection
@@ -110,18 +114,25 @@ export function QueryCard({
   showQuery,
   onToggleQuery,
   queryPlotted,
+  hitCount,
 }: {
   lastAnswer: AskResponse | null
   lastQuestion: string
   showQuery: boolean
   onToggleQuery: () => void
   queryPlotted: boolean
+  hitCount: number
 }) {
+  const hiddenHits = lastAnswer ? lastAnswer.sources.length - hitCount : 0
   return (
     <div className={`query-card ${lastAnswer ? '' : 'query-card--empty'}`}>
       <div className="query-card__head">
         <span className="eyebrow">Last query</span>
-        {lastAnswer ? <Badge tone="accent">{pluralize(lastAnswer.sources.length, 'hit')}</Badge> : null}
+        {lastAnswer ? (
+          <Badge tone="accent">
+            {pluralize(hitCount, 'plotted hit')}
+          </Badge>
+        ) : null}
       </div>
 
       {lastAnswer ? (
@@ -139,6 +150,11 @@ export function QueryCard({
             <p className="query-card__note">
               The saved query embedding has a different dimension than this map, so it cannot be
               projected without a re-embed. Ask again to place the current query.
+            </p>
+          ) : hiddenHits > 0 ? (
+            <p className="query-card__note">
+              {pluralize(hiddenHits, 'retrieved chunk')} fall outside this sample of{' '}
+              {pluralize(hitCount, 'plotted chunk')}.
             </p>
           ) : null}
           <button type="button" className="query-card__toggle" onClick={onToggleQuery}>

@@ -18,10 +18,21 @@ export function RecallChart({
   const values = methods.flatMap((method) => [method.recall_at_1, method.recall_at_10])
   const minimum = values.length ? Math.max(0, Math.floor(Math.min(...values) * 20) / 20 - 0.05) : 0.8
   const maximum = 1
+  const efValues = methods.map((method) => method.ef_search ?? 0)
+  const minimumEf = Math.min(...efValues)
+  const maximumEf = Math.max(...efValues)
 
-  const x = (index: number) =>
-    padding.left +
-    (methods.length <= 1 ? plotWidth / 2 : (index / (methods.length - 1)) * plotWidth)
+  // The sweep is multiplicative (10, 20, 50, 100, 200), so equal pixel gaps
+  // would overstate the cost of the first steps and understate the last ones.
+  const x = (index: number) => {
+    if (methods.length <= 1 || minimumEf === maximumEf) {
+      return padding.left + plotWidth / 2
+    }
+    const ef = methods[index].ef_search ?? minimumEf
+    const fraction =
+      (Math.log2(ef) - Math.log2(minimumEf)) / (Math.log2(maximumEf) - Math.log2(minimumEf))
+    return padding.left + fraction * plotWidth
+  }
   const y = (value: number) =>
     padding.top + (1 - (value - minimum) / (maximum - minimum || 1)) * plotHeight
   const pathFor = (key: 'recall_at_1' | 'recall_at_10') =>
@@ -39,8 +50,8 @@ export function RecallChart({
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="chart__svg"
-        role="img"
-        aria-label="Recall at one and recall at ten as efSearch increases. Values are also in the results table."
+        role="group"
+        aria-label="Interactive recall chart. Each efSearch has its own button; values are also in the results table."
       >
         {ticks.map((tick) => (
           <g key={tick}>
@@ -83,7 +94,16 @@ export function RecallChart({
               height={plotHeight}
               fill="transparent"
               className="chart__hit"
+              role="button"
+              tabIndex={0}
+              aria-label={`Select efSearch ${method.ef_search}`}
               onClick={() => method.ef_search !== undefined && onSelect(method.ef_search)}
+              onKeyDown={(event) => {
+                if ((event.key === 'Enter' || event.key === ' ') && method.ef_search !== undefined) {
+                  event.preventDefault()
+                  onSelect(method.ef_search)
+                }
+              }}
             >
               <title>Select efSearch {method.ef_search}</title>
             </rect>
@@ -91,7 +111,7 @@ export function RecallChart({
         ))}
 
         <text className="chart__axis" x={width / 2} y={height - 8} textAnchor="middle">
-          efSearch
+          efSearch (log scale)
         </text>
         <text
           className="chart__axis"

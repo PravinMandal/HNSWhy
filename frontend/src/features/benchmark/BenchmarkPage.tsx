@@ -66,7 +66,7 @@ export function BenchmarkPage() {
       {error ? <ErrorNotice message={error} retry={refresh} /> : null}
 
       {loading && !response ? (
-        <div className="bench-loading">
+        <div className="bench-loading" role="status" aria-busy="true" aria-label="Loading the benchmark report">
           <Skeleton className="skeleton--block skeleton--h-180" />
           <div className="bench-loading__grid">
             <Skeleton className="skeleton--block skeleton--h-300" />

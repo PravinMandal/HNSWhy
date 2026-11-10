@@ -125,7 +125,7 @@
   display: block;
   margin-top: 1px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-4);
   white-space: nowrap;
   overflow: hidden;
@@ -145,7 +145,7 @@
 }
 
 .document-row__metric span {
-  font-size: 9.5px;
+  font-size: 10.5px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--ink-4);
@@ -267,8 +267,12 @@
     display: none;
   }
 
+  .document-row__actions {
+    gap: 4px;
+  }
+
   .document-row__actions .btn--quiet {
-    display: none;
+    padding-inline: 8px;
   }
 
   .sample-notice {

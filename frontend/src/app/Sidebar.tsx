@@ -38,27 +38,32 @@ function BrandMark() {
 }
 
 function ConnectionStatus() {
-  const { health, status, loading } = useData()
+  const { health, status, loading, error } = useData()
   const online = health?.status === 'ok'
   const degraded = health?.status === 'degraded'
   const connecting = loading && !health && !status
-  const tone = connecting ? 'pending' : online ? 'ok' : degraded ? 'warn' : 'error'
+  const stale = Boolean(error) && !loading
+  const tone = connecting ? 'pending' : stale ? 'warn' : online ? 'ok' : degraded ? 'warn' : 'error'
   const label = connecting
     ? 'Connecting'
-    : online
-      ? 'Index online'
-      : degraded
-        ? 'Providers degraded'
-        : 'API offline'
+    : stale
+      ? 'Reconnecting'
+      : online
+        ? 'Index online'
+        : degraded
+          ? 'Providers degraded'
+          : 'API offline'
 
   return (
-    <div className="rail-status" aria-label={`Server status: ${label}`}>
+    <div className="rail-status" role="status" aria-live="polite" aria-label={`Server status: ${label}`}>
       <div className="rail-status__top">
         <span className={`status-dot status-dot--${tone}`} />
         <strong>{label}</strong>
       </div>
       <span className="rail-status__line">
-        {formatCompact(status?.index.live ?? 0)} live vectors · {status?.embedding.dim ?? 0}d
+        {status
+          ? `${formatCompact(status.index.live)} live vectors · ${status.embedding.dim}d`
+          : 'No server data yet'}
       </span>
       <span className="rail-status__line rail-status__line--muted">
         {status ? `${status.embedding.provider}/${status.embedding.model}` : 'Waiting for the server'}
@@ -107,10 +112,14 @@ export function Sidebar({
       inert={inert}
     >
       <div className="rail__top">
-        <button
-          type="button"
+        {/* Real links keep open-in-new-tab and status-bar previews working. */}
+        <a
           className="brand"
-          onClick={() => navigate('documents')}
+          href="#/documents"
+          onClick={(event) => {
+            event.preventDefault()
+            navigate('documents')
+          }}
           aria-label="HNSWhy home"
         >
           <BrandMark />
@@ -118,7 +127,7 @@ export function Sidebar({
             <strong>HNSWhy</strong>
             <small>HNSW knowledge engine</small>
           </span>
-        </button>
+        </a>
         <button
           ref={closeButtonRef}
           type="button"
@@ -136,11 +145,14 @@ export function Sidebar({
           {navItems.map((item) => {
             const active = route === item.route
             return (
-              <button
+              <a
                 key={item.route}
-                type="button"
+                href={`#/${item.route}`}
                 className={`rail-nav__item ${active ? 'is-active' : ''}`}
-                onClick={() => navigate(item.route)}
+                onClick={(event) => {
+                  event.preventDefault()
+                  navigate(item.route)
+                }}
                 aria-current={active ? 'page' : undefined}
               >
                 <span className="rail-nav__icon">
@@ -153,7 +165,7 @@ export function Sidebar({
                 {item.route === 'documents' ? (
                   <span className="rail-nav__count">{documents.length}</span>
                 ) : null}
-              </button>
+              </a>
             )
           })}
         </nav>

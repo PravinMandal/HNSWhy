@@ -79,7 +79,8 @@ HNSWHY_TEST(hnsw_deleted_nodes_are_never_returned) {
             CHECK(id >= 100);
             CHECK(!hnsw.isDeleted(id));
         }
-        CHECK(hnswhy::tie_aware_recall_at_k(result.distances, truth.distances, 10) >= 0.8);
+        CHECK_EQ(result.stats.exact_fallbacks, std::uint32_t{0});
+        CHECK(hnswhy::tie_aware_recall_at_k(result.distances, truth.distances, 10) >= 0.9);
     }
 }
 
@@ -105,7 +106,8 @@ HNSWHY_TEST(hnsw_search_works_after_the_entry_point_is_deleted) {
         const hnswhy::SearchResult result = hnsw.search(query, 5, 50);
         CHECK_EQ(result.ids.size(), std::size_t{5});
         CHECK(std::find(result.ids.begin(), result.ids.end(), entry) == result.ids.end());
-        CHECK(hnswhy::tie_aware_recall_at_k(result.distances, truth.distances, 5) >= 0.9);
+        CHECK_EQ(result.stats.exact_fallbacks, std::uint32_t{0});
+        CHECK(hnswhy::tie_aware_recall_at_k(result.distances, truth.distances, 5) >= 0.95);
     }
 }
 

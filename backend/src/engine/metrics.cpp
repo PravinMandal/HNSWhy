@@ -70,6 +70,8 @@ LatencySummary summarize_latency(std::vector<double> samples_ms) {
     summary.p50 = percentile_of_sorted(50.0);
     summary.p95 = percentile_of_sorted(95.0);
     summary.p99 = percentile_of_sorted(99.0);
+    summary.min = samples_ms.front();
+    summary.max = samples_ms.back();
     return summary;
 }
 

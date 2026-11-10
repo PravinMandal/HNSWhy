@@ -1,27 +1,11 @@
 import type { BenchMethod, BenchReport } from '../../api/types'
-import { formatNumber, formatPercent } from '../../lib/format'
+import { formatNumber, formatPercent, pluralize } from '../../lib/format'
 import { Badge } from '../../ui/Badge'
 import { Icon } from '../../ui/Icon'
 import { LatencyBars } from './LatencyBars'
 import { MethodTable } from './MethodTable'
+import { formatDuration } from './metrics'
 import { RecallChart } from './RecallChart'
-
-export function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms)) {
-    return '—'
-  }
-  if (ms >= 1000) {
-    return `${(ms / 1000).toFixed(2)} s`
-  }
-  return `${ms.toFixed(ms < 10 ? 2 : 1)} ms`
-}
-
-export function formatRate(value: number): string {
-  if (!Number.isFinite(value)) {
-    return '—'
-  }
-  return `${formatNumber(value)}/s`
-}
 
 export function ReportDetails({
   report,
@@ -31,7 +15,7 @@ export function ReportDetails({
   activeEf,
   speedup,
   recallRetention,
-  latencyReduction,
+  p50Speedup,
   onSelectEf,
 }: {
   report: BenchReport
@@ -41,7 +25,7 @@ export function ReportDetails({
   activeEf: number | null
   speedup: number | null
   recallRetention: number | null
-  latencyReduction: number | null
+  p50Speedup: number | null
   onSelectEf: (ef: number) => void
 }) {
   return (
@@ -76,7 +60,11 @@ export function ReportDetails({
         <div className="card__head">
           <div>
             <h2 id="latency-heading">Latency percentiles</h2>
-            <p>Per-query search time at efSearch {activeEf}.</p>
+            <p>
+              {activeEf !== null
+                ? `Per-query search time at efSearch ${activeEf}.`
+                : 'The report has no HNSW sweep points.'}
+            </p>
           </div>
           <Icon name="clock" size={17} />
         </div>
@@ -97,7 +85,7 @@ export function ReportDetails({
             <h2 id="table-heading">All measurements</h2>
             <p>HNSW rows are sweep points; the exact scan is the baseline.</p>
           </div>
-          <Badge tone="neutral">{report.methods.length} rows</Badge>
+          <Badge tone="neutral">{pluralize(report.methods.length, 'row')}</Badge>
         </div>
         <MethodTable methods={report.methods} activeEf={activeEf} onSelect={onSelectEf} />
       </section>
@@ -126,8 +114,8 @@ export function ReportDetails({
               </small>
             </div>
             <div>
-              <span>Latency reduction</span>
-              <strong>{latencyReduction !== null ? `${latencyReduction.toFixed(0)}×` : '—'}</strong>
+              <span>p50 speedup</span>
+              <strong>{p50Speedup !== null ? `${p50Speedup.toFixed(1)}×` : '—'}</strong>
               <small>
                 {formatDuration(active.latency_ms.p50)} vs. {formatDuration(brute.latency_ms.p50)} p50
               </small>
@@ -172,6 +160,21 @@ export function ReportDetails({
           <div><dt>Build</dt><dd>{report.config.build_type}</dd></div>
           <div><dt>AVX2</dt><dd>{report.environment.avx2 ? 'enabled' : 'not used'}</dd></div>
           <div><dt>Engine</dt><dd>{report.engine.name} {report.engine.version}</dd></div>
+          {report.provenance?.run_id ? (
+            <div><dt>Run</dt><dd>{report.provenance.run_id}</dd></div>
+          ) : null}
+          {report.provenance?.git_commit ? (
+            <div>
+              <dt>Commit</dt>
+              <dd>
+                {report.provenance.git_commit.slice(0, 12)}
+                {report.provenance.worktree_dirty ? ' (dirty)' : ''}
+              </dd>
+            </div>
+          ) : null}
+          {report.provenance?.cxx_flags_release ? (
+            <div><dt>Release flags</dt><dd>{report.provenance.cxx_flags_release}</dd></div>
+          ) : null}
         </dl>
       </section>
     </div>

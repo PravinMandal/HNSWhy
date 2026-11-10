@@ -14,6 +14,13 @@ struct Failure : std::runtime_error {
     explicit Failure(std::string message) : std::runtime_error(std::move(message)) {}
 };
 
+// A test that cannot run in this environment (for example an optional dataset
+// is absent). The harness reports it separately from a pass, so a green run
+// never hides coverage that did not execute.
+struct Skip : std::runtime_error {
+    explicit Skip(std::string message) : std::runtime_error(std::move(message)) {}
+};
+
 struct Case {
     std::string name;
     std::function<void()> fn;
@@ -57,7 +64,9 @@ struct Registrar {
         const double hnswhy_a = static_cast<double>(a);                                       \
         const double hnswhy_b = static_cast<double>(b);                                       \
         const double hnswhy_eps = static_cast<double>(eps);                                   \
-        if (std::fabs(hnswhy_a - hnswhy_b) > hnswhy_eps) {                                            \
+        /* Written as !(diff <= eps) so a NaN difference fails the check. Comparing */       \
+        /* NaN > eps is false and would let a broken result pass silently. */                 \
+        if (!(std::fabs(hnswhy_a - hnswhy_b) <= hnswhy_eps)) {                                \
             std::ostringstream hnswhy_os;                                                     \
             hnswhy_os << __FILE__ << ":" << __LINE__ << ": CHECK_NEAR failed: " #a " ~ " #b   \
                   << " (" << hnswhy_a << " vs " << hnswhy_b << ", eps " << hnswhy_eps << ")";         \

@@ -62,53 +62,65 @@ RagService::RagService(const DocumentStore& store, VectorIndex& index,
     }
 }
 
-RagAnswer RagService::ask(std::string_view question, std::size_t k) {
-    const std::string trimmed = trim_copy(question);
-    if (trimmed.empty()) {
+RagQuery RagService::embed_question(std::string_view question) const {
+    RagQuery query;
+    query.question = trim_copy(question);
+    if (query.question.empty()) {
         throw validation_error("question must not be empty");
     }
-    if (!is_valid_utf8(trimmed)) {
+    if (!is_valid_utf8(query.question)) {
         throw validation_error("question must be valid UTF-8");
     }
-    if (utf8_length(trimmed) > 2000) {
+    if (utf8_length(query.question) > 2000) {
         throw validation_error("question must be at most 2000 characters");
     }
+
+    query.started_at = Clock::now();
+    const Clock::time_point embed_begin = Clock::now();
+    std::vector<std::vector<float>> query_embeddings = embedder_.embed({query.question});
+    query.timings.embedding_ms = elapsed_ms(embed_begin);
+    if (query_embeddings.size() != 1 || query_embeddings[0].empty()) {
+        throw ProductError("PROVIDER_ERROR", "the embedding provider returned no query vector",
+                           502);
+    }
+    if (!finite_embedding(query_embeddings[0])) {
+        throw ProductError("PROVIDER_ERROR",
+                           "the embedding provider returned a non-finite query vector", 502);
+    }
+    query.query_vector = normalize_embedding(std::move(query_embeddings[0]));
+    return query;
+}
+
+RagAnswer RagService::retrieve(const RagQuery& query, std::size_t k) {
     if (k == 0 || k > 20) {
         throw validation_error("k must be between 1 and 20");
     }
 
-    const Clock::time_point total_begin = Clock::now();
     RagAnswer answer;
     answer.embedding_provider = embedder_.name();
     answer.embedding_model = embedder_.model();
     answer.chat_provider = chat_.name();
     answer.chat_model = chat_.model();
+    answer.query_vector = query.query_vector;
+    answer.timings = query.timings;
 
     if (index_.live() == 0) {
         answer.answer = kNoAnswer;
+        answer.timings.total_ms = elapsed_ms(query.started_at);
         return answer;
     }
 
-    const Clock::time_point embed_begin = Clock::now();
-    std::vector<std::vector<float>> query_embeddings = embedder_.embed({trimmed});
-    answer.timings.embedding_ms = elapsed_ms(embed_begin);
-    if (query_embeddings.size() != 1 || query_embeddings[0].empty()) {
-        throw ProductError("PROVIDER_ERROR", "the embedding provider returned no query vector",
-                           502);
-    }
-    std::vector<float> query = normalize_embedding(std::move(query_embeddings[0]));
-    if (query.size() != index_.dim()) {
+    if (query.query_vector.size() != index_.dim()) {
         throw ProductError("EMBEDDING_MISMATCH",
                            "the question embedding dimension does not match the index", 500);
     }
-    answer.query_vector = query;
 
     const Clock::time_point search_begin = Clock::now();
-    const std::vector<IndexHit> hits = index_.search(query, k, ef_search_);
+    const std::vector<IndexHit> hits = index_.search(query.query_vector, k, ef_search_);
     answer.timings.search_ms = elapsed_ms(search_begin);
     if (hits.empty()) {
         answer.answer = kNoAnswer;
-        answer.timings.total_ms = elapsed_ms(total_begin);
+        answer.timings.total_ms = elapsed_ms(query.started_at);
         return answer;
     }
 
@@ -135,11 +147,19 @@ RagAnswer RagService::ask(std::string_view question, std::size_t k) {
         source.distance = hits[i].distance;
         answer.sources.push_back(std::move(source));
     }
+    answer.timings.total_ms = elapsed_ms(query.started_at);
+    return answer;
+}
+
+RagAnswer RagService::generate(const RagQuery& query, RagAnswer answer) const {
+    if (answer.sources.empty()) {
+        return answer;
+    }
 
     ChatRequest request;
-    request.question = trimmed;
+    request.question = query.question;
     request.system_prompt = build_system_prompt();
-    request.user_prompt = build_user_prompt(trimmed, answer.sources);
+    request.user_prompt = build_user_prompt(query.question, answer.sources);
     for (const RagSource& source : answer.sources) {
         request.sources.push_back(ChatSource{source.title, source.text});
     }
@@ -150,8 +170,17 @@ RagAnswer RagService::ask(std::string_view question, std::size_t k) {
     if (answer.answer.empty()) {
         throw ProductError("PROVIDER_ERROR", "the chat provider returned an empty answer", 502);
     }
-    answer.timings.total_ms = elapsed_ms(total_begin);
+    answer.timings.total_ms = elapsed_ms(query.started_at);
     return answer;
+}
+
+RagAnswer RagService::ask(std::string_view question, std::size_t k) {
+    const RagQuery query = embed_question(question);
+    RagAnswer answer = retrieve(query, k);
+    if (answer.sources.empty()) {
+        return answer;
+    }
+    return generate(query, std::move(answer));
 }
 
 }  // namespace hnswhy

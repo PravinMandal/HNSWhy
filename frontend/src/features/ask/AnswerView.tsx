@@ -1,12 +1,61 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import Markdown, { defaultUrlTransform, type Components } from 'react-markdown'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import type { AskResponse, AskSource } from '../../api/types'
 import { useToast } from '../../app/ToastProvider'
 import { formatMs, formatNumber, pluralize, truncate } from '../../lib/format'
+import { scrollBehavior } from '../../lib/motion'
 import { Badge } from '../../ui/Badge'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
 
 const REFUSAL = 'I could not find an answer to that question in the uploaded documents.'
+
+// Answers may come from a language model, so render Markdown with a strict
+// allow-list. Raw HTML is never enabled, and images are excluded because they
+// can leak the reader's IP to a third-party host.
+const MARKDOWN_ELEMENTS = [
+  'p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'blockquote',
+  'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'a', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+]
+
+const citationSchema = {
+  ...defaultSchema,
+  protocols: {
+    ...defaultSchema.protocols,
+    href: [...(defaultSchema.protocols?.href ?? []), 'citation'],
+  },
+}
+
+function citationNumbers(text: string, sourceCount: number): number[] {
+  return Array.from(text.matchAll(/\[(\d+)\]/g))
+    .map((match) => Number(match[1]))
+    .filter((index) => index >= 1 && index <= sourceCount)
+}
+
+/**
+ * Rewrites bracketed citation markers into Markdown links. Code spans and
+ * fenced blocks are left untouched so `array[1]` in a snippet is not turned
+ * into a citation, and markers that already belong to a Markdown link are
+ * skipped so an existing URL is never rewritten.
+ */
+export function linkCitations(markdown: string, sourceCount: number): string {
+  return markdown
+    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
+    .map((segment) => {
+      if (segment.startsWith('`')) {
+        return segment
+      }
+      return segment.replace(/\[(\d+)\](?!\()/g, (match, digits: string) => {
+        const citation = Number(digits)
+        return citation >= 1 && citation <= sourceCount
+          ? `[${digits}](citation:${citation})`
+          : match
+      })
+    })
+    .join('')
+}
 
 function AnswerText({
   text,
@@ -17,30 +66,41 @@ function AnswerText({
   sourceCount: number
   onCitation: (index: number) => void
 }) {
-  const parts = text.split(/(\[\d+\])/g)
-  return (
-    <div className="answer-text">
-      {parts.map((part, index) => {
-        const match = /^\[(\d+)\]$/.exec(part)
-        if (!match) {
-          return <span key={`text-${index}`}>{part}</span>
-        }
-        const citation = Number(match[1])
-        if (citation < 1 || citation > sourceCount) {
-          return <span key={`citation-${index}`}>{part}</span>
-        }
+  const markdown = linkCitations(text, sourceCount)
+
+  const components: Components = {
+    a({ href, children }) {
+      if (href?.startsWith('citation:')) {
+        const citation = Number(href.slice('citation:'.length))
         return (
           <button
-            key={`citation-${index}`}
             type="button"
             className="citation"
             onClick={() => onCitation(citation)}
             aria-label={`Jump to source ${citation}`}
           >
-            {match[1]}
+            {children}
           </button>
         )
-      })}
+      }
+      return (
+        <a href={href} target="_blank" rel="noreferrer">
+          {children}
+        </a>
+      )
+    },
+  }
+
+  return (
+    <div className="answer-text">
+      <Markdown
+        allowedElements={MARKDOWN_ELEMENTS}
+        components={components}
+        rehypePlugins={[[rehypeSanitize, citationSchema]]}
+        urlTransform={(url) => (url.startsWith('citation:') ? url : defaultUrlTransform(url))}
+      >
+        {markdown}
+      </Markdown>
     </div>
   )
 }
@@ -63,7 +123,7 @@ function SourceCard({
   const classes = ['source', active ? 'is-active' : '', expanded ? 'is-expanded' : ''].filter(Boolean).join(' ')
 
   return (
-    <article ref={cardRef} className={classes}>
+    <article ref={cardRef} className={classes} tabIndex={-1}>
       <button type="button" className="source__head" onClick={onToggle} aria-expanded={expanded}>
         <span className="source__number">{String(index).padStart(2, '0')}</span>
         <span className="source__title">
@@ -105,13 +165,21 @@ export function AnswerView({ answer, onOpenMap }: { answer: AskResponse; onOpenM
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set([1]))
   const sourceRefs = useRef(new Map<number, HTMLElement>())
   const refused = answer.answer.trim() === REFUSAL
+  const cited = useMemo(
+    () => citationNumbers(answer.answer, answer.sources.length).length > 0,
+    [answer.answer, answer.sources.length],
+  )
   const total = Math.max(answer.timings_ms.total, 0.0001)
 
   const focusSource = (index: number) => {
     setActiveSource(index)
     setExpanded((current) => new Set(current).add(index))
     window.requestAnimationFrame(() => {
-      sourceRefs.current.get(index)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      const source = sourceRefs.current.get(index)
+      source?.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' })
+      // Scroll is visual only; move focus so keyboard and screen-reader users
+      // land on the cited chunk too.
+      source?.focus({ preventScroll: true })
     })
   }
 
@@ -133,17 +201,21 @@ export function AnswerView({ answer, onOpenMap }: { answer: AskResponse; onOpenM
               <Icon name={refused ? 'info' : 'sparkles'} size={19} />
             </span>
             <div>
-              <h2 id="answer-heading">{refused ? 'No grounded answer' : 'Grounded answer'}</h2>
+              <h2 id="answer-heading" tabIndex={-1}>
+                {refused ? 'No answer found' : cited ? 'Answer with citations' : 'Answer without citations'}
+              </h2>
               <span>
                 {refused
-                  ? 'The retrieved context did not support an answer.'
-                  : `${pluralize(answer.sources.length, 'source')} retrieved · ${formatMs(answer.timings_ms.total)} total`}
+                  ? 'The retrieved chunks did not support an answer.'
+                  : cited
+                    ? `${pluralize(answer.sources.length, 'source')} retrieved · ${formatMs(answer.timings_ms.total)} total`
+                    : 'The model did not cite a source, so this text is not traceable to a chunk.'}
               </span>
             </div>
           </div>
           <div className="answer__actions">
-            <Badge tone={refused ? 'warn' : 'accent'} dot>
-              {refused ? 'refusal' : 'cited'}
+            <Badge tone={refused || !cited ? 'warn' : 'accent'} dot>
+              {refused ? 'refusal' : cited ? 'cited' : 'uncited'}
             </Badge>
             <Button variant="ghost" size="sm" onClick={() => void copyAnswer()} icon={<Icon name="copy" size={15} />}>
               Copy
@@ -157,7 +229,15 @@ export function AnswerView({ answer, onOpenMap }: { answer: AskResponse; onOpenM
             <span>Try a concept that appears in your documents, or upload a source that covers it.</span>
           </div>
         ) : (
-          <AnswerText text={answer.answer} sourceCount={answer.sources.length} onCitation={focusSource} />
+          <>
+            {!cited ? (
+              <p className="answer-warning" role="note">
+                This answer contains no citation markers, so it cannot be traced back to the
+                retrieved chunks. Verify it against the sources below before relying on it.
+              </p>
+            ) : null}
+            <AnswerText text={answer.answer} sourceCount={answer.sources.length} onCitation={focusSource} />
+          </>
         )}
 
         <footer className="answer__foot">

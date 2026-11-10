@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace hnswhy {
 
@@ -26,10 +27,6 @@ inline ProductError validation_error(std::string message) {
 
 inline ProductError not_found_error(std::string message) {
     return ProductError("NOT_FOUND", std::move(message), 404);
-}
-
-inline ProductError provider_error(std::string code, std::string message) {
-    return ProductError(std::move(code), std::move(message), 503);
 }
 
 }  // namespace hnswhy

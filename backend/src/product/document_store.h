@@ -146,6 +146,18 @@ private:
 
     std::filesystem::path path_;
     sqlite3* db_ = nullptr;
+
+    // An exclusive advisory lock held for the store's lifetime. Two server
+    // processes on one SQLite file would each keep their own in-memory index
+    // and silently diverge, so the second opener fails fast instead.
+    struct FileLock {
+        int fd = -1;
+        FileLock() = default;
+        ~FileLock();
+        FileLock(const FileLock&) = delete;
+        FileLock& operator=(const FileLock&) = delete;
+    };
+    FileLock lock_;
 };
 
 }  // namespace hnswhy

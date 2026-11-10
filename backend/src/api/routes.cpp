@@ -56,6 +56,29 @@ json parse_json_body(const httplib::Request& request) {
     }
 }
 
+std::string trimmed_lowercase(std::string text) {
+    const auto not_space = [](unsigned char c) { return std::isspace(c) == 0; };
+    text.erase(text.begin(), std::find_if(text.begin(), text.end(), not_space));
+    text.erase(std::find_if(text.rbegin(), text.rend(), not_space).base(), text.end());
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+// Routes that read JSON must say so. Parsing an arbitrary body as JSON turns a
+// client mistake (wrong Content-Type) into a confusing "invalid JSON" 400.
+void require_json_content_type(const httplib::Request& request) {
+    const std::string header = request.get_header_value("Content-Type");
+    const std::string type = trimmed_lowercase(header.substr(0, header.find(';')));
+    const bool json_type =
+        type == "application/json" ||
+        (type.size() > 5 && type.compare(type.size() - 5, 5, "+json") == 0);
+    if (!json_type) {
+        throw ProductError("UNSUPPORTED_MEDIA_TYPE",
+                           "this endpoint requires Content-Type: application/json", 415);
+    }
+}
+
 std::string required_string(const json& body, const char* field) {
     if (!body.contains(field) || !body[field].is_string()) {
         throw validation_error(std::string(field) + " must be a string");
@@ -227,6 +250,7 @@ void register_routes(httplib::Server& server, Application& app) {
                             source = std::filesystem::path(file.filename).filename().string();
                             text = extract_text(file.content, file.filename, file.content_type);
                         } else {
+                            require_json_content_type(request);
                             const json body = parse_json_body(request);
                             text = required_string(body, "text");
                             title = optional_string(body, "title");
@@ -253,6 +277,7 @@ void register_routes(httplib::Server& server, Application& app) {
     server.Post("/api/ask", [&app](const httplib::Request& request,
                                    httplib::Response& response) {
         guarded(response, [&] {
+            require_json_content_type(request);
             const json body = parse_json_body(request);
             const std::string question = required_string(body, "question");
             std::size_t k = app.config().default_k;

@@ -65,7 +65,7 @@ std::string os_name() {
 
 json latency_json(const LatencySummary& latency) {
     return json{{"mean", latency.mean}, {"p50", latency.p50}, {"p95", latency.p95},
-                {"p99", latency.p99}};
+                {"p99", latency.p99}, {"min", latency.min}, {"max", latency.max}};
 }
 
 }  // namespace
@@ -125,6 +125,7 @@ void write_bench_json(const std::filesystem::path& output, const BenchReport& re
           {"base_file", report.dataset.base_file},
           {"base_count", report.dataset.base_count},
           {"base_bytes", report.dataset.base_bytes},
+          {"base_file_bytes", report.dataset.base_file_bytes},
           {"dim", report.dataset.dim},
           {"queries_file", report.dataset.queries_file},
           {"query_count", report.dataset.query_count},
@@ -145,6 +146,21 @@ void write_bench_json(const std::filesystem::path& output, const BenchReport& re
          {{"build_time_ms", report.build.build_time_ms},
           {"rss_after_build_mb", report.build.rss_after_build_mb},
           {"peak_rss_mb", report.build.peak_rss_mb}}},
+        {"provenance",
+         {{"run_id", report.provenance.run_id},
+          {"git_commit", report.provenance.git_commit},
+          {"worktree_dirty", report.provenance.worktree_dirty},
+          {"base_prefix", report.provenance.base_prefix},
+          {"base_sha256", report.provenance.base_sha256},
+          {"queries_sha256", report.provenance.queries_sha256},
+          {"ground_truth_ids_sha256", report.provenance.ground_truth_ids_sha256},
+          {"ground_truth_distances_sha256",
+           report.provenance.ground_truth_distances_sha256},
+          {"cxx_flags_release", report.provenance.cxx_flags_release}}},
+        {"checks",
+         {{"exact_checked", report.exact_check.checked},
+          {"exact_max_distance_error", report.exact_check.max_distance_error},
+          {"exact_tolerance", report.exact_check.tolerance}}},
         {"methods", std::move(methods)},
         {"environment",
          {{"hostname", hostname()},
@@ -172,11 +188,26 @@ void write_bench_json(const std::filesystem::path& output, const BenchReport& re
     if (!parent.empty()) {
         std::filesystem::create_directories(parent);
     }
-    std::ofstream out(output);
-    if (!out) {
-        throw std::runtime_error("cannot write benchmark report: " + output.string());
+    // Write beside the target and rename so an interrupted run cannot leave a
+    // truncated bench.json behind.
+    const std::filesystem::path temporary = output.string() + ".tmp";
+    {
+        std::ofstream out(temporary);
+        if (!out) {
+            throw std::runtime_error("cannot write benchmark report: " + output.string());
+        }
+        out << root.dump(2) << '\n';
+        if (!out) {
+            throw std::runtime_error("cannot write benchmark report: " + output.string());
+        }
     }
-    out << root.dump(2) << '\n';
+    std::error_code error;
+    std::filesystem::rename(temporary, output, error);
+    if (error) {
+        std::filesystem::remove(temporary);
+        throw std::runtime_error("cannot replace benchmark report: " + output.string() +
+                                 ": " + error.message());
+    }
 }
 
 }  // namespace hnswhy

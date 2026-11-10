@@ -105,7 +105,10 @@ HttpResult http_get(const HttpEndpoint& endpoint, std::string_view path,
     client.set_connection_timeout(timeout_seconds, 0);
     client.set_read_timeout(timeout_seconds, 0);
     client.set_write_timeout(timeout_seconds, 0);
-    client.set_follow_location(true);
+    // Never follow redirects automatically: the request may carry an
+    // Authorization header, and a cross-origin redirect would forward the key.
+    // A provider that redirects should be configured with its final URL.
+    client.set_follow_location(false);
 
     const auto response = client.Get(join_path(endpoint, path).c_str(), to_headers(headers));
     if (!response) {
@@ -133,7 +136,8 @@ HttpResult http_post(const HttpEndpoint& endpoint, std::string_view path,
     client.set_connection_timeout(timeout_seconds, 0);
     client.set_read_timeout(timeout_seconds, 0);
     client.set_write_timeout(timeout_seconds, 0);
-    client.set_follow_location(true);
+    // See http_get: redirects could leak the Authorization header.
+    client.set_follow_location(false);
 
     const auto response =
         client.Post(join_path(endpoint, path).c_str(), to_headers(headers), body,

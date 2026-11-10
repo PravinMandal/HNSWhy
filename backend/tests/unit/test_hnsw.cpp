@@ -85,6 +85,11 @@ HNSWHY_TEST(hnsw_finds_exact_neighbours_on_small_random_set) {
             CHECK(result.distances[i - 1] <= result.distances[i]);
         }
         recall_sum += hnswhy::tie_aware_recall_at_k(result.distances, truth.distances, k);
+        // The exact-scan fallback returns before visiting any layer. A nonzero
+        // count proves the query really walked the graph, and no store
+        // completion was needed to fill the result.
+        CHECK(result.stats.layer_visits > 0);
+        CHECK_EQ(result.stats.exact_fallbacks, std::uint32_t{0});
     }
 
     const double mean_recall = recall_sum / static_cast<double>(query_count);
@@ -100,6 +105,7 @@ HNSWHY_TEST(hnsw_self_queries_return_the_point_first) {
     for (hnswhy::Slot id = 0; id < store.size(); ++id) {
         const hnswhy::SearchResult result = hnsw.search(store.get(id), 1, 50);
         CHECK_EQ(result.ids.size(), std::size_t{1});
+        CHECK_EQ(result.stats.exact_fallbacks, std::uint32_t{0});
         if (result.ids[0] == id) {
             ++self_hits;
         }
@@ -145,6 +151,7 @@ HNSWHY_TEST(hnsw_tie_heavy_search_returns_all_live_vectors) {
     duplicate_graph.validate();
     const hnswhy::SearchResult all_duplicates = duplicate_graph.search(zero, n, n);
     CHECK_EQ(all_duplicates.ids.size(), n);
+    CHECK(all_duplicates.stats.exact_fallbacks > 0);
     for (const float distance : all_duplicates.distances) {
         CHECK_NEAR(distance, 0.0, 0.0);
     }
@@ -163,8 +170,119 @@ HNSWHY_TEST(hnsw_tie_heavy_search_returns_all_live_vectors) {
     one_hot_graph.build();
     const hnswhy::SearchResult all_one_hot = one_hot_graph.search(one_hot.get(0), n, n);
     CHECK_EQ(all_one_hot.ids.size(), n);
+    CHECK(all_one_hot.stats.exact_fallbacks > 0);
     CHECK_EQ(all_one_hot.ids.front(), hnswhy::Slot{0});
     CHECK_NEAR(all_one_hot.distances.front(), 0.0, 0.0);
+}
+
+HNSWHY_TEST(hnsw_incremental_duplicates_stay_searchable) {
+    constexpr std::size_t base_count = 48;
+    constexpr std::size_t duplicates = 32;
+    constexpr std::size_t dim = 8;
+    const hnswhy::VectorStore base = make_random_store(base_count, dim, 21);
+
+    hnswhy::VectorStore store;
+    store.reserve(base_count + duplicates, dim);
+    for (hnswhy::Slot id = 0; id < base_count; ++id) {
+        store.add(base.get(id));
+    }
+    hnswhy::HNSW graph(store, small_params());
+    graph.build();
+    graph.validate();
+
+    // Append exact copies one at a time, as incremental uploads would. Each
+    // copy must stay reachable instead of becoming a one-way leaf that only an
+    // exact scan could find.
+    for (std::size_t i = 0; i < duplicates; ++i) {
+        store.add(base.get(0));
+        graph.insert(static_cast<hnswhy::Slot>(base_count + i));
+    }
+    graph.validate();
+    CHECK_EQ(graph.reachableCount(0), graph.size());
+
+    const hnswhy::SearchResult result = graph.search(base.get(0), 20, 64);
+    CHECK_EQ(result.ids.size(), std::size_t{20});
+    CHECK_EQ(result.stats.exact_fallbacks, std::uint32_t{0});
+    std::size_t zero_distances = 0;
+    for (const float distance : result.distances) {
+        if (distance == 0.0f) {
+            ++zero_distances;
+        }
+    }
+    CHECK_EQ(zero_distances, std::size_t{20});
+}
+
+HNSWHY_TEST(hnsw_removing_unreachable_nodes_restores_graph_search) {
+    constexpr std::size_t n = 64;
+    constexpr std::size_t dim = n + 4;
+    hnswhy::VectorStore store;
+    store.reserve(n, dim);
+    for (std::size_t i = 0; i < n; ++i) {
+        std::vector<float> row(dim, 0.0f);
+        row[i] = 1.0f;
+        store.add(row);
+    }
+    hnswhy::HNSW graph(store, small_params());
+    graph.build();
+    CHECK(graph.reachableCount(0) < graph.size());
+
+    // One-hot vectors build a disconnected layer 0. Tombstone the trailing
+    // unreachable nodes until the live set is connected again.
+    while (graph.size() > 1 && graph.reachableCount(0) != graph.size()) {
+        graph.remove(static_cast<hnswhy::Slot>(graph.size() - 1));
+    }
+    CHECK_EQ(graph.reachableCount(0), graph.size());
+
+    const hnswhy::SearchResult result = graph.search(store.get(0), 1, 64);
+    CHECK_EQ(result.ids.size(), std::size_t{1});
+    CHECK_EQ(result.ids.front(), hnswhy::Slot{0});
+    // If the disconnected flag stayed stuck, search would scan every live
+    // vector and return before visiting any layer. A connected graph must take
+    // the approximate path instead.
+    CHECK(result.stats.layer_visits > 0);
+    CHECK_EQ(result.stats.exact_fallbacks, std::uint32_t{0});
+}
+
+HNSWHY_TEST(hnsw_incremental_insert_after_connected_removals_rechecks_reachability) {
+    // Regression: an insertion can prune an edge or attach the new node to a
+    // tombstoned component, leaving layer 0 disconnected while the cached
+    // "connected" flag still says true. Search would then skip the exact
+    // fallback and return a wrong neighbour for the new node.
+    hnswhy::VectorStore store = make_random_store(40, 4, 6942);
+    hnswhy::HNSWParams params;
+    params.M = 4;
+    params.M0 = 4;
+    params.efConstruction = 8;
+    params.seed = 6942;
+    hnswhy::HNSW graph(store, params);
+    graph.build();
+    CHECK(graph.reachableCount(0) < graph.size());
+
+    // Tombstone the trailing unreachable nodes until the live graph is
+    // connected again, then search once so remove()'s dirty flag is cleared.
+    // The bug needs the cached flag to be true at insertion time.
+    hnswhy::Slot removed = hnswhy::kInvalidSlot;
+    while (graph.size() > 1 && graph.reachableCount(0) != graph.size()) {
+        removed = static_cast<hnswhy::Slot>(graph.size() - 1);
+        graph.remove(removed);
+    }
+    CHECK_EQ(graph.reachableCount(0), graph.size());
+    graph.search(store.get(0), 1, 50);
+
+    // Re-insert a copy of a removed vector. Its nearest candidate is the
+    // tombstone, which can accept a back-edge while being outside the live
+    // component.
+    store.add(store.get(removed));
+    const hnswhy::Slot added = static_cast<hnswhy::Slot>(store.size() - 1);
+    graph.insert(added);
+
+    // If the insert left the graph disconnected, the next search must notice
+    // and use the exact fallback. A connected result needs no fallback.
+    const bool disconnected = graph.reachableCount(0) != graph.size();
+    const hnswhy::SearchResult result = graph.search(store.get(added), 1, 50);
+    CHECK_EQ(result.ids.size(), std::size_t{1});
+    CHECK_EQ(result.ids.front(), added);
+    CHECK_EQ(result.stats.exact_fallbacks > 0, disconnected);
 }
 
 HNSWHY_TEST(hnsw_is_deterministic_for_the_same_seed) {
@@ -194,6 +312,20 @@ HNSWHY_TEST(hnsw_ef_below_k_still_returns_k) {
 
     const std::vector<float> query{0.0f, 0.0f, 0.0f, 0.0f};
     const hnswhy::SearchResult result = hnsw.search(query, 10, 1);
+    CHECK_EQ(result.ids.size(), std::size_t{10});
+    CHECK_EQ(result.stats.exact_fallbacks, std::uint32_t{0});
+}
+
+HNSWHY_TEST(hnsw_zero_k_returns_empty_and_ef_zero_still_returns_k) {
+    const hnswhy::VectorStore store = make_random_store(100, 4, 14);
+    hnswhy::HNSW hnsw(store, small_params());
+    hnsw.build();
+
+    const std::vector<float> query{0.0f, 0.0f, 0.0f, 0.0f};
+    CHECK(hnsw.search(query, 0, 10).ids.empty());
+
+    // ef is clamped up to k, so ef=0 is not an error; it means "use k".
+    const hnswhy::SearchResult result = hnsw.search(query, 10, 0);
     CHECK_EQ(result.ids.size(), std::size_t{10});
 }
 
@@ -226,6 +358,7 @@ HNSWHY_TEST(hnsw_survives_permuted_insertion_order) {
         const std::span<const float> query = original.get(static_cast<hnswhy::Slot>(q * 7));
         const hnswhy::SearchResult truth = brute_force.search(query, 10);
         const hnswhy::SearchResult result = hnsw.search(query, 10, 80);
+        CHECK_EQ(result.stats.exact_fallbacks, std::uint32_t{0});
         recall_sum += hnswhy::tie_aware_recall_at_k(result.distances, truth.distances, 10);
     }
     CHECK(recall_sum / static_cast<double>(query_count) >= 0.95);
@@ -250,6 +383,12 @@ HNSWHY_TEST(hnsw_rejects_invalid_parameters) {
     params = small_params();
     params.maxLevel = 256;
     CHECK_THROWS_AS(hnswhy::HNSW(store, params), std::invalid_argument);
+
+    // M0 is stored in a uint16_t, so the constructor must reject values that
+    // would silently truncate.
+    params = small_params();
+    params.M0 = 65536;
+    CHECK_THROWS_AS(hnswhy::HNSW(store, params), std::invalid_argument);
 }
 
 HNSWHY_TEST(hnsw_rejects_dimension_mismatch_query) {
@@ -271,6 +410,7 @@ HNSWHY_TEST(hnsw_reports_search_stats) {
     CHECK(result.stats.distance_computations > 0);
     CHECK(result.stats.hops > 0);
     CHECK_EQ(result.stats.layer_visits, static_cast<std::uint32_t>(hnsw.topLevel() + 1));
+    CHECK_EQ(result.stats.exact_fallbacks, std::uint32_t{0});
 }
 
 HNSWHY_TEST(hnsw_rejects_out_of_store_insert) {
@@ -345,6 +485,9 @@ HNSWHY_TEST(hnsw_one_hot_self_queries_stay_exact_and_prefix_consistent) {
         CHECK_EQ(one.ids.size(), std::size_t{1});
         CHECK_EQ(one.ids.front(), id);
         CHECK_NEAR(one.distances.front(), 0.0, 0.0);
+        // This graph is deliberately disconnected, so the exact scan is the
+        // documented path rather than a silent degradation.
+        CHECK(one.stats.exact_fallbacks > 0);
 
         const hnswhy::SearchResult ten = graph.search(store.get(id), 10, 64);
         CHECK_EQ(ten.ids.size(), std::size_t{10});

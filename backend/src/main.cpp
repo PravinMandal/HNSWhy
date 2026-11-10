@@ -17,16 +17,23 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        Application app(config);
         httplib::Server server;
         server.set_payload_max_length(25U * 1024U * 1024U);
-        register_routes(server, app);
 
-        std::cout << "[hnswhy] listening on http://" << config.host << ':' << config.port
-                  << '\n';
-        if (!server.listen(config.host, config.port)) {
+        // Bind before the expensive startup work so a busy port fails fast
+        // instead of after opening SQLite and rebuilding the vector index.
+        if (!server.bind_to_port(config.host, config.port)) {
             std::cerr << "[hnswhy] failed to bind " << config.host << ':' << config.port
                       << '\n';
+            return 1;
+        }
+
+        Application app(config);
+        register_routes(server, app);
+        std::cout << "[hnswhy] listening on http://" << config.host << ':' << config.port
+                  << '\n';
+        if (!server.listen_after_bind()) {
+            std::cerr << "[hnswhy] server stopped unexpectedly\n";
             return 1;
         }
         return 0;

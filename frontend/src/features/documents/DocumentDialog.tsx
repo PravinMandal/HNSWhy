@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { api } from '../../api/client'
 import type { DocumentDetail } from '../../api/types'
-import { fileKind, formatDate, formatNumber, truncate } from '../../lib/format'
+import { fileKind, formatDate, formatNumber, pluralize, truncate } from '../../lib/format'
 import { Badge } from '../../ui/Badge'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
@@ -24,6 +24,23 @@ export function DocumentDialog({
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('text')
   const [reloadKey, setReloadKey] = useState(0)
+  const textTabRef = useRef<HTMLButtonElement>(null)
+  const chunksTabRef = useRef<HTMLButtonElement>(null)
+
+  const selectTab = (next: Tab) => {
+    setTab(next)
+    window.requestAnimationFrame(() => {
+      ;(next === 'text' ? textTabRef : chunksTabRef).current?.focus()
+    })
+  }
+
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      return
+    }
+    event.preventDefault()
+    selectTab(event.key === 'ArrowLeft' || event.key === 'Home' ? 'text' : 'chunks')
+  }
 
   useEffect(() => {
     if (documentId === null) {
@@ -86,7 +103,7 @@ export function DocumentDialog({
       footer={footer}
     >
       {loading ? (
-        <div className="detail-loading">
+        <div className="detail-loading" role="status" aria-busy="true" aria-label="Loading document">
           <Skeleton className="skeleton--title" />
           <Skeleton className="skeleton--line" />
           <Skeleton className="skeleton--block" />
@@ -97,38 +114,60 @@ export function DocumentDialog({
         <div className="detail">
           <div className="detail__meta">
             <Badge tone="neutral">{fileKind(detail.document.source)}</Badge>
-            <span>{formatNumber(detail.document.chunk_count)} chunks</span>
+            <span>{pluralize(detail.document.chunk_count, 'chunk')}</span>
             <span>{formatNumber(detail.document.char_count)} characters</span>
             <span>Added {formatDate(detail.document.created_at)}</span>
           </div>
 
           <div className="segmented segmented--inline" role="tablist" aria-label="Document view">
             <button
+              ref={textTabRef}
               type="button"
               role="tab"
+              id="document-tab-text"
+              aria-controls="document-panel-text"
               aria-selected={tab === 'text'}
+              tabIndex={tab === 'text' ? 0 : -1}
               className={tab === 'text' ? 'segmented__item is-active' : 'segmented__item'}
               onClick={() => setTab('text')}
+              onKeyDown={onTabKeyDown}
             >
               Extracted text
             </button>
             <button
+              ref={chunksTabRef}
               type="button"
               role="tab"
+              id="document-tab-chunks"
+              aria-controls="document-panel-chunks"
               aria-selected={tab === 'chunks'}
+              tabIndex={tab === 'chunks' ? 0 : -1}
               className={tab === 'chunks' ? 'segmented__item is-active' : 'segmented__item'}
               onClick={() => setTab('chunks')}
+              onKeyDown={onTabKeyDown}
             >
               Chunks <span className="segmented__count">{detail.chunks.length}</span>
             </button>
           </div>
 
           {tab === 'text' ? (
-            <div className="detail__text" tabIndex={0}>
+            <div
+              className="detail__text"
+              id="document-panel-text"
+              role="tabpanel"
+              aria-labelledby="document-tab-text"
+              tabIndex={0}
+            >
               {detail.text}
             </div>
           ) : (
-            <div className="chunk-list">
+            <div
+              className="chunk-list"
+              id="document-panel-chunks"
+              role="tabpanel"
+              aria-labelledby="document-tab-chunks"
+              tabIndex={0}
+            >
               {detail.chunks.map((chunk) => (
                 <article key={chunk.id} className="chunk">
                   <header className="chunk__head">

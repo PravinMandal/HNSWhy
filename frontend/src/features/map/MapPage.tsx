@@ -80,9 +80,15 @@ export function MapPage({ onOpenDocuments }: { onOpenDocuments: () => void }) {
     [colors],
   )
 
+  const plottedIds = useMemo(() => new Set(points.map((point) => point.chunk_id)), [points])
   const highlighted = useMemo(
-    () => new Set(lastAnswer?.sources.map((source) => source.chunk_id) ?? []),
-    [lastAnswer],
+    () =>
+      new Set(
+        lastAnswer?.sources
+          .map((source) => source.chunk_id)
+          .filter((chunkId) => plottedIds.has(chunkId)) ?? [],
+      ),
+    [lastAnswer, plottedIds],
   )
 
   const legend = useMemo(() => {
@@ -109,6 +115,11 @@ export function MapPage({ onOpenDocuments }: { onOpenDocuments: () => void }) {
     inspected && projection && inspectedIndex >= 0 ? projection.points[inspectedIndex] : null
   const dimension = projection?.mean.length ?? status?.embedding.dim ?? 0
   const canPlotQuery = Boolean(projection?.query)
+  // One source of truth for the toggle, the legend, and the plot itself. When
+  // the saved query has a different dimension it is not projected, so showing
+  // half an overlay would imply a relationship that is not on screen.
+  const overlayActive = showQuery && Boolean(lastAnswer) && canPlotQuery
+  const hitCount = highlighted.size
 
   const refresh = () => setReload((value) => value + 1)
 
@@ -130,7 +141,8 @@ export function MapPage({ onOpenDocuments }: { onOpenDocuments: () => void }) {
       selectedId,
       hoveredId,
       focusedDocument,
-      showQuery: showQuery && Boolean(lastAnswer),
+      showQuery: overlayActive,
+      describedBy: 'map-accessible-note',
       onSelect: setSelectedId,
       onHover: setHoveredId,
     }
@@ -158,7 +170,7 @@ export function MapPage({ onOpenDocuments }: { onOpenDocuments: () => void }) {
       {error ? <ErrorNotice message={error} retry={refresh} /> : null}
 
       {loading && !map ? (
-        <div className="map-loading">
+        <div className="map-loading" role="status" aria-busy="true" aria-label="Loading the embedding map">
           <Skeleton className="map-loading__canvas" />
           <Skeleton className="map-loading__panel" />
         </div>
@@ -181,7 +193,12 @@ export function MapPage({ onOpenDocuments }: { onOpenDocuments: () => void }) {
           action={<Button variant="secondary" onClick={refresh}>Refresh map</Button>}
         />
       ) : projecting || !projection ? (
-        <div className="map-loading">
+        <div
+          className="map-loading"
+          role="status"
+          aria-busy="true"
+          aria-label="Projecting embeddings into two dimensions"
+        >
           <Skeleton className="map-loading__canvas" />
           <Skeleton className="map-loading__panel" />
         </div>
@@ -211,14 +228,16 @@ export function MapPage({ onOpenDocuments }: { onOpenDocuments: () => void }) {
 
             <button
               type="button"
-              className={`toggle ${showQuery && lastAnswer ? 'is-active' : ''}`}
+              className={`toggle ${overlayActive ? 'is-active' : ''}`}
               onClick={() => setShowQuery((value) => !value)}
-              aria-pressed={showQuery && Boolean(lastAnswer)}
-              disabled={!lastAnswer}
+              aria-pressed={overlayActive}
+              disabled={!lastAnswer || !canPlotQuery}
               title={
-                lastAnswer
-                  ? 'Highlight the chunks and query embedding from your latest question'
-                  : 'Ask a question to see retrieval highlights'
+                !lastAnswer
+                  ? 'Ask a question to see retrieval highlights'
+                  : !canPlotQuery
+                    ? 'The saved query embedding does not match this map dimension; ask again to plot it'
+                    : 'Highlight the chunks and query embedding from your latest question'
               }
             >
               <span className="toggle__dot" />
@@ -239,7 +258,7 @@ export function MapPage({ onOpenDocuments }: { onOpenDocuments: () => void }) {
                   <p>Points are coloured by document. Hover or select any point to inspect its chunk.</p>
                 </div>
                 <div className="map-panel__annotations">
-                  {showQuery && lastAnswer ? (
+                  {overlayActive ? (
                     <>
                       <span className="annotation">
                         <span className="marker marker--ring" />
@@ -255,9 +274,13 @@ export function MapPage({ onOpenDocuments }: { onOpenDocuments: () => void }) {
               </div>
 
               <div className="map-panel__canvas">{renderPlot()}</div>
+              <p id="map-accessible-note" className="sr-only">
+                The projection is a visual overview. To browse the same points with a keyboard or
+                screen reader, use the “Inspect a chunk” list in the map inspector.
+              </p>
 
               <div className="map-panel__foot">
-                <div className="legend" aria-label="Documents in the map">
+                <div className="legend" role="group" aria-label="Documents in the map">
                   {legend.map(([documentId, entry]) => (
                     <button
                       key={documentId}
@@ -305,9 +328,10 @@ export function MapPage({ onOpenDocuments }: { onOpenDocuments: () => void }) {
               <QueryCard
                 lastAnswer={lastAnswer}
                 lastQuestion={lastQuestion}
-                showQuery={showQuery}
+                showQuery={overlayActive}
                 onToggleQuery={() => setShowQuery((value) => !value)}
                 queryPlotted={canPlotQuery}
+                hitCount={hitCount}
               />
 
               <div className="map-note">
@@ -315,7 +339,8 @@ export function MapPage({ onOpenDocuments }: { onOpenDocuments: () => void }) {
                 <p>
                   PCA is fitted in your browser on up to 1,200 stored embeddings. It preserves the
                   dominant variance, not every neighbour relation — use Ask to see the actual HNSW
-                  result set.
+                  result set. On-screen coordinates are rescaled to a unit view, so only relative
+                  position is meaningful.
                 </p>
               </div>
             </aside>

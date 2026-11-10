@@ -61,15 +61,18 @@ target_compile_options(hns_bench PRIVATE ${HNSWHY_WARNINGS})
 
 add_executable(hns_tests
     tests/framework/main.cpp
+    tests/unit/test_framework.cpp
     tests/unit/test_distance.cpp
     tests/unit/test_vector_store.cpp
     tests/unit/test_brute_force.cpp
+    tests/unit/test_cli.cpp
     tests/unit/test_fvecs.cpp
     tests/unit/test_hnsw.cpp
     tests/unit/test_prune.cpp
     tests/unit/test_delete.cpp
     tests/unit/test_metrics.cpp
     tests/unit/test_chunker.cpp
+    tests/unit/test_config.cpp
     tests/unit/test_document_store.cpp
     tests/unit/test_providers.cpp
     tests/unit/test_vector_index.cpp
@@ -90,6 +93,7 @@ target_link_libraries(hns_tests PRIVATE hnswhy_io hnswhy_product)
 target_compile_options(hns_tests PRIVATE ${HNSWHY_WARNINGS})
 target_compile_definitions(hns_tests PRIVATE
     HNSWHY_FIXTURE_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/sift10k"
+    HNSWHY_TEST_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures"
 )
 
 add_test(NAME hns_tests COMMAND hns_tests)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import type { MapPoint } from '../../api/types'
 import { truncate } from '../../lib/format'
 
@@ -12,6 +12,7 @@ interface Plot2DProps {
   hoveredId: number | null
   focusedDocument: number | null
   showQuery: boolean
+  describedBy?: string
   onSelect: (id: number | null) => void
   onHover: (id: number | null) => void
 }
@@ -37,6 +38,7 @@ export function Plot2D({
   hoveredId,
   focusedDocument,
   showQuery,
+  describedBy,
   onSelect,
   onHover,
 }: Plot2DProps) {
@@ -53,6 +55,9 @@ export function Plot2D({
   const [scale, setScale] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
+  // Roving tab index: the map is one tab stop, and arrow keys walk the points.
+  // Making all 1,200 circles tabbable would bury every other control on the page.
+  const [focusIndex, setFocusIndex] = useState(0)
 
   useEffect(() => {
     const svg = svgRef.current
@@ -156,6 +161,28 @@ export function Plot2D({
   const pointRadius = unit > 0 ? baseRadius * unit : 0.024
   const ringRadius = pointRadius + (unit > 0 ? 3.2 * unit : 0.014)
   const selectedRadius = pointRadius + (unit > 0 ? 2 * unit : 0.01)
+  // At least ~16 CSS pixels of hit target, even when a point is only 3px wide.
+  const hitRadius = Math.max(pointRadius * 1.8, unit > 0 ? 8 * unit : 0.05)
+
+  const focusPoint = (index: number) => {
+    const target = svgRef.current?.querySelector<SVGGElement>(`[data-point-index="${index}"]`)
+    target?.focus()
+    setFocusIndex(index)
+  }
+
+  const onPointKeyDown = (event: KeyboardEvent<SVGGElement>, index: number) => {
+    const point = points[index]
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      onSelect(selectedId === point.chunk_id ? null : point.chunk_id)
+      return
+    }
+    const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0
+    if (step !== 0 && points.length > 0) {
+      event.preventDefault()
+      focusPoint((index + step + points.length) % points.length)
+    }
+  }
 
   return (
     <div className="plot2d">
@@ -163,8 +190,9 @@ export function Plot2D({
         ref={svgRef}
         viewBox={`${-VIEW} ${-VIEW} ${VIEW * 2} ${VIEW * 2}`}
         className="plot2d__svg"
-        role="img"
-        aria-label="Two-dimensional PCA projection of document embeddings, coloured by document."
+        role="group"
+        aria-label="Two-dimensional PCA projection of document embeddings, coloured by document. Use the arrow keys to move between points and Enter to select one."
+        aria-describedby={describedBy}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -203,9 +231,20 @@ export function Plot2D({
             return (
               <g
                 key={point.chunk_id}
+                data-point-index={index}
                 transform={`translate(${coordinate[0]} ${coordinate[1]})`}
                 opacity={dimmed ? 0.16 : 1}
                 className="plot-point"
+                role="button"
+                tabIndex={index === focusIndex ? 0 : -1}
+                aria-label={`${point.title}, chunk ${point.chunk_id}${isHighlighted ? ', retrieved for the last question' : ''}`}
+                aria-pressed={selected}
+                onFocus={() => {
+                  setFocusIndex(index)
+                  onHover(point.chunk_id)
+                }}
+                onBlur={() => onHover(null)}
+                onKeyDown={(event) => onPointKeyDown(event, index)}
               >
                 {isHighlighted ? (
                   <circle className="plot-point__hit" r={ringRadius} stroke="var(--query)" />
@@ -215,6 +254,12 @@ export function Plot2D({
                   r={hovered ? pointRadius * 1.35 : pointRadius}
                   fill={colorFor(point.document_id)}
                   className="plot-point__dot"
+                />
+                {/* Transparent target layered above the dot so small points stay clickable. */}
+                <circle
+                  r={hitRadius}
+                  fill="transparent"
+                  className="plot-point__target"
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation()
@@ -223,10 +268,11 @@ export function Plot2D({
                   onDoubleClick={reset}
                   onMouseEnter={() => onHover(point.chunk_id)}
                   onMouseLeave={() => onHover(null)}
-                />
-                <title>
-                  {point.title} · chunk {point.chunk_id} · {truncate(point.preview, 120)}
-                </title>
+                >
+                  <title>
+                    {point.title} · chunk {point.chunk_id} · {truncate(point.preview, 120)}
+                  </title>
+                </circle>
               </g>
             )
           })}

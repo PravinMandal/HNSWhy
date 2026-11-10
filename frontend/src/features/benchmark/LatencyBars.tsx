@@ -1,14 +1,5 @@
 import type { BenchMethod } from '../../api/types'
-
-function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms)) {
-    return '—'
-  }
-  if (ms >= 1000) {
-    return `${(ms / 1000).toFixed(2)} s`
-  }
-  return `${ms.toFixed(ms < 10 ? 2 : 1)} ms`
-}
+import { formatDuration } from './metrics'
 
 export function LatencyBars({ method }: { method: BenchMethod }) {
   const values = [

@@ -2,15 +2,16 @@ import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { api } from '../../api/client'
 import type { DocumentSummary } from '../../api/types'
 import { useToast } from '../../app/ToastProvider'
-import { formatNumber } from '../../lib/format'
+import { formatNumber, pluralize } from '../../lib/format'
 import { Button } from '../../ui/Button'
 import { Icon } from '../../ui/Icon'
 import { Modal } from '../../ui/Modal'
 import { InlineError } from '../../ui/States'
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024
-const MAX_TEXT_CHARS = 4 * 1024 * 1024
+const MAX_TEXT_BYTES = 4 * 1024 * 1024
 const ACCEPTED = ['pdf', 'md', 'markdown', 'txt']
+const TEXT_EXTENSIONS = ['md', 'markdown', 'txt']
 
 type Mode = 'file' | 'text'
 
@@ -23,9 +24,25 @@ function validateFile(file: File): string | null {
     return 'That file is empty.'
   }
   if (file.size > MAX_FILE_BYTES) {
-    return 'That file is larger than the 20 MB upload limit.'
+    return 'That file is larger than the 20 MiB upload limit.'
+  }
+  // The server caps extracted text at 4 MiB even though a PDF may be 20 MiB.
+  // Reject oversized text before uploading so the user gets the real limit.
+  if (TEXT_EXTENSIONS.includes(extension) && file.size > MAX_TEXT_BYTES) {
+    return 'Text and Markdown files are limited to 4 MiB. PDFs can be up to 20 MiB.'
   }
   return null
+}
+
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).length
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+  return `${(bytes / 1024).toFixed(0)} KB`
 }
 
 export function UploadDialog({
@@ -96,8 +113,8 @@ export function UploadDialog({
         setError('Paste some text before adding the document.')
         return
       }
-      if (text.length > MAX_TEXT_CHARS) {
-        setError('The pasted text is larger than the 4 MB document limit.')
+      if (utf8Bytes(text) > MAX_TEXT_BYTES) {
+        setError('The pasted text is larger than the 4 MiB document limit.')
         return
       }
     }
@@ -113,7 +130,9 @@ export function UploadDialog({
       pushToast({
         tone: 'success',
         title: 'Document added',
-        message: `${formatNumber(document.chunk_count)} chunks are now searchable.`,
+        message: `${pluralize(document.chunk_count, 'chunk')} ${
+          document.chunk_count === 1 ? 'is' : 'are'
+        } now searchable.`,
       })
       onUploaded(document)
       onClose()
@@ -184,7 +203,11 @@ export function UploadDialog({
             maxLength={200}
             disabled={busy}
           />
-          <span className="field__hint">Falls back to the file name when left empty.</span>
+          <span className="field__hint">
+            {mode === 'file'
+              ? 'Falls back to the file name when left empty.'
+              : 'Used as the document title in the library.'}
+          </span>
         </label>
 
         {mode === 'file' ? (
@@ -192,7 +215,11 @@ export function UploadDialog({
             className={`dropzone ${dragging ? 'is-dragging' : ''} ${file ? 'is-filled' : ''}`}
             role="button"
             tabIndex={0}
-            aria-label="Choose a document to upload"
+            aria-label={
+              file ? `Selected file ${file.name}. Choose a different file` : 'Choose a document to upload'
+            }
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'upload-error' : undefined}
             onDragOver={(event) => {
               event.preventDefault()
               setDragging(true)
@@ -225,13 +252,15 @@ export function UploadDialog({
               <>
                 <strong>{file.name}</strong>
                 <span className="dropzone__meta">
-                  {(file.size / 1024).toFixed(0)} KB · click to choose a different file
+                  {formatFileSize(file.size)} · click to choose a different file
                 </span>
               </>
             ) : (
               <>
                 <strong>Drop a file here, or browse</strong>
-                <span className="dropzone__meta">PDF, Markdown, or TXT · up to 20 MB</span>
+                <span className="dropzone__meta">
+                  PDF up to 20 MiB · Markdown or TXT up to 4 MiB
+                </span>
               </>
             )}
           </div>
@@ -256,9 +285,11 @@ export function UploadDialog({
                 placeholder="Paste notes, documentation, or an article here…"
                 rows={9}
                 disabled={busy}
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? 'upload-error' : undefined}
               />
               <span className="field__hint">
-                {formatNumber(text.length)} characters · 4 MB maximum
+                {formatNumber(text.length)} characters · 4 MiB maximum
               </span>
             </label>
           </div>
@@ -276,7 +307,7 @@ export function UploadDialog({
           </div>
         ) : null}
 
-        {error ? <InlineError>{error}</InlineError> : null}
+        {error ? <InlineError id="upload-error">{error}</InlineError> : null}
       </div>
     </Modal>
   )

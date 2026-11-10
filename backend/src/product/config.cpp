@@ -115,25 +115,54 @@ void apply_environment(AppConfig& config) {
             env_long("HNSWHY_EMBEDDING_DIM", config.embedding.dim, 0, 65536));
     }
 
-    if (config.embedding.api_key.empty()) {
-        config.embedding.api_key = env_string("OPENAI_API_KEY");
-    }
-    if (config.chat.api_key.empty()) {
-        config.chat.api_key = env_string("OPENAI_API_KEY");
-    }
-
-    config.hnsw.M = static_cast<std::size_t>(env_long("HNSWHY_HNSW_M", 16, 4, 1024));
-    config.hnsw.M0 = static_cast<std::size_t>(env_long("HNSWHY_HNSW_M0", 32, 4, 65535));
-    config.hnsw.efConstruction =
-        static_cast<std::size_t>(env_long("HNSWHY_HNSW_EF_CONSTRUCTION", 200, 1, 10000));
+    // Defaults come from AppConfig, not repeated literals, so changing a
+    // default in one place cannot leave the environment path behind.
+    config.hnsw.M =
+        static_cast<std::size_t>(env_long("HNSWHY_HNSW_M", static_cast<long>(config.hnsw.M),
+                                          4, 1024));
+    config.hnsw.M0 =
+        static_cast<std::size_t>(env_long("HNSWHY_HNSW_M0", static_cast<long>(config.hnsw.M0),
+                                          4, 65535));
+    config.hnsw.efConstruction = static_cast<std::size_t>(
+        env_long("HNSWHY_HNSW_EF_CONSTRUCTION",
+                 static_cast<long>(config.hnsw.efConstruction), 1, 10000));
     config.hnsw.seed = static_cast<std::uint64_t>(
         env_long("HNSWHY_HNSW_SEED", static_cast<long>(config.hnsw.seed), 0, 1000000000));
-    config.query_ef = static_cast<std::size_t>(env_long("HNSWHY_QUERY_EF", 50, 1, 10000));
-    config.default_k = static_cast<std::size_t>(env_long("HNSWHY_DEFAULT_K", 5, 1, 20));
-    config.chunk_target_words =
-        static_cast<std::size_t>(env_long("HNSWHY_CHUNK_WORDS", 350, 20, 4000));
-    config.chunk_overlap_words =
-        static_cast<std::size_t>(env_long("HNSWHY_CHUNK_OVERLAP", 50, 0, 2000));
+    config.query_ef = static_cast<std::size_t>(
+        env_long("HNSWHY_QUERY_EF", static_cast<long>(config.query_ef), 1, 10000));
+    config.default_k = static_cast<std::size_t>(
+        env_long("HNSWHY_DEFAULT_K", static_cast<long>(config.default_k), 1, 20));
+    config.chunk_target_words = static_cast<std::size_t>(
+        env_long("HNSWHY_CHUNK_WORDS", static_cast<long>(config.chunk_target_words), 20, 4000));
+    config.chunk_overlap_words = static_cast<std::size_t>(
+        env_long("HNSWHY_CHUNK_OVERLAP", static_cast<long>(config.chunk_overlap_words), 0, 2000));
+}
+
+bool is_default_openai_endpoint(const std::string& provider, const std::string& base_url) {
+    if (lower(trim(provider)) != "openai") {
+        return false;
+    }
+    const std::string base = lower(trim(base_url));
+    return base.empty() || base == "https://api.openai.com" ||
+           base.rfind("https://api.openai.com/", 0) == 0;
+}
+
+// OPENAI_API_KEY is a convenient default only for OpenAI itself. Forwarding it
+// to an arbitrary OpenAI-compatible base URL would leak a real credential to a
+// third-party or localhost service.
+void apply_default_openai_key(AppConfig& config) {
+    const char* key = env_value("OPENAI_API_KEY");
+    if (key == nullptr || *key == '\0') {
+        return;
+    }
+    if (config.embedding.api_key.empty() &&
+        is_default_openai_endpoint(config.embedding.provider, config.embedding.base_url)) {
+        config.embedding.api_key = key;
+    }
+    if (config.chat.api_key.empty() &&
+        is_default_openai_endpoint(config.chat.provider, config.chat.base_url)) {
+        config.chat.api_key = key;
+    }
 }
 
 std::string take_value(int argc, char** argv, int& index, std::string_view flag) {
@@ -142,6 +171,15 @@ std::string take_value(int argc, char** argv, int& index, std::string_view flag)
     }
     ++index;
     return argv[index];
+}
+
+bool has_flag(int argc, char** argv, std::string_view flag) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::string_view(argv[i]) == flag) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void apply_command_line(AppConfig& config, int argc, char** argv) {
@@ -217,15 +255,20 @@ AppConfig load_config(int argc, char** argv) {
     AppConfig config;
     apply_environment(config);
     apply_command_line(config, argc, argv);
+    // Run after command-line parsing because --embedding-base-url and
+    // --chat-base-url decide whether the ambient OpenAI key is safe to use.
+    apply_default_openai_key(config);
 
-    bool cli_dim_explicit = false;
-    for (int i = 1; i < argc; ++i) {
-        if (std::string_view(argv[i]) == "--embedding-dim") {
-            cli_dim_explicit = true;
-            break;
-        }
+    // M0 defaults to twice M. Derive it only when the user did not set it, so
+    // changing --M alone stays valid while an explicit M0 keeps its own value.
+    const bool m0_explicit =
+        env_value("HNSWHY_HNSW_M0") != nullptr || has_flag(argc, argv, "--M0");
+    if (!m0_explicit) {
+        config.hnsw.M0 = config.hnsw.M * 2;
     }
-    const bool dim_explicit = env_value("HNSWHY_EMBEDDING_DIM") != nullptr || cli_dim_explicit;
+
+    const bool dim_explicit =
+        env_value("HNSWHY_EMBEDDING_DIM") != nullptr || has_flag(argc, argv, "--embedding-dim");
     if (!dim_explicit) {
         const std::string provider = lower(trim(config.embedding.provider));
         config.embedding.dim = provider.empty() || provider == "hash" ? 256 : 0;
@@ -233,6 +276,9 @@ AppConfig load_config(int argc, char** argv) {
 
     if (config.port < 1 || config.port > 65535) {
         throw ProductError("CONFIG_ERROR", "port must be between 1 and 65535", 500);
+    }
+    if (config.hnsw.M0 < config.hnsw.M) {
+        throw ProductError("CONFIG_ERROR", "M0 must be greater than or equal to M", 500);
     }
     if (config.chunk_overlap_words >= config.chunk_target_words) {
         throw ProductError("CONFIG_ERROR", "chunk overlap must be smaller than chunk words",

@@ -19,8 +19,7 @@
 HNSWHY_TEST(siftsmall_hnsw_recall_and_invariants) {
     const char* dir = std::getenv("HNSWHY_SIFTSMALL_DIR");
     if (dir == nullptr || *dir == '\0') {
-        std::cout << "  [skip] HNSWHY_SIFTSMALL_DIR is not set\n";
-        return;
+        throw hnswhytest::Skip("HNSWHY_SIFTSMALL_DIR is not set");
     }
 
     const std::filesystem::path root(dir);
@@ -66,6 +65,7 @@ HNSWHY_TEST(siftsmall_hnsw_recall_and_invariants) {
             std::chrono::duration<double, std::milli>(query_end - query_start).count());
 
         CHECK_EQ(result.ids.size(), std::size_t{10});
+        CHECK_EQ(result.stats.exact_fallbacks, std::uint32_t{0});
         recall1_sum += hnswhy::tie_aware_recall_at_k(result.distances, truth_distances, 1);
         recall10_sum += hnswhy::tie_aware_recall_at_k(result.distances, truth_distances, 10);
     }
@@ -79,7 +79,9 @@ HNSWHY_TEST(siftsmall_hnsw_recall_and_invariants) {
     std::cout << "  siftsmall hnsw: build " << build_ms << " ms, R@1 " << recall1 << ", R@10 "
               << recall10 << ", p50 " << latency.p50 << " ms, p95 " << latency.p95 << " ms\n";
 
-    CHECK(recall1 >= 0.95);
-    CHECK(recall10 >= 0.90);
+    // Observed on this dataset: R@1 0.99, R@10 0.997. Keep the gate close
+    // enough to catch a real regression without failing on run-to-run noise.
+    CHECK(recall1 >= 0.98);
+    CHECK(recall10 >= 0.99);
     CHECK(hnsw.distanceComputations() > 0);
 }

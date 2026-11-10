@@ -256,6 +256,9 @@ public:
 
 private:
     std::vector<std::pair<std::string, std::string>> headers() const {
+        if (api_key_.empty()) {
+            return {};
+        }
         return {{"Authorization", "Bearer " + api_key_}};
     }
 
@@ -317,6 +320,9 @@ public:
 
 private:
     std::vector<std::pair<std::string, std::string>> headers() const {
+        if (api_key_.empty()) {
+            return {};
+        }
         return {{"Authorization", "Bearer " + api_key_}};
     }
 
@@ -471,10 +477,6 @@ std::unique_ptr<EmbeddingProvider> create_embedding_provider(
         if (resolved.base_url.empty()) {
             resolved.base_url = "https://api.openai.com/v1";
         }
-        if (resolved.api_key.empty()) {
-            throw ProductError("PROVIDER_CONFIG",
-                               "the openai embedding provider requires an API key", 500);
-        }
         if (resolved.timeout_seconds < 1) {
             resolved.timeout_seconds = 60;
         }
@@ -513,10 +515,6 @@ std::unique_ptr<ChatProvider> create_chat_provider(const ChatConfig& config) {
         }
         if (resolved.base_url.empty()) {
             resolved.base_url = "https://api.openai.com/v1";
-        }
-        if (resolved.api_key.empty()) {
-            throw ProductError("PROVIDER_CONFIG",
-                               "the openai chat provider requires an API key", 500);
         }
         if (resolved.timeout_seconds < 1) {
             resolved.timeout_seconds = 60;

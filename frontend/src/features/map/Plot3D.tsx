@@ -13,6 +13,7 @@ interface Plot3DProps {
   hoveredId: number | null
   focusedDocument: number | null
   showQuery: boolean
+  describedBy?: string
   onSelect: (id: number | null) => void
   onHover: (id: number | null) => void
 }
@@ -36,6 +37,7 @@ export function Plot3D({
   hoveredId,
   focusedDocument,
   showQuery,
+  describedBy,
   onSelect,
   onHover,
 }: Plot3DProps) {
@@ -369,6 +371,7 @@ export function Plot3D({
           className="plot3d__canvas"
           role="img"
           aria-label="Three-dimensional PCA projection of document embeddings. Drag to orbit, scroll to zoom, and select a point to inspect it."
+          aria-describedby={describedBy}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}

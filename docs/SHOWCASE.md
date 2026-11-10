@@ -110,7 +110,7 @@ footer.
 
 - POST `/api/ask` `{ question, k }`.
 - Backend embeds, searches, retrieves, prompts, generates, returns
-  `{ answer, sources, retrieved, timings }`.
+  `{ answer, sources, query_vector, timings_ms, models }`.
 - If the index has no live chunks: "I could not find this in the uploaded documents."
   No LLM call. Do not answer from general knowledge.
 - If the index has chunks, retrieve and prompt. If the model refuses because the sources
@@ -219,7 +219,7 @@ The product API is defined in `ARCHITECTURE.md` §7. The UI uses only these endp
 | list documents | `GET /api/documents` |
 | delete document | `DELETE /api/documents/{id}` |
 | ask | `POST /api/ask` |
-| map | `GET /api/map?limit=1000` |
+| map | `GET /api/map?limit=1200` (API default 800, cap 2,000) |
 | benchmark | `GET /api/benchmark` |
 
 The benchmark payload is `bench.json` from `plan.md` §8. The map payload is sampled
@@ -251,7 +251,10 @@ The UI should map error codes to actionable states, not dump a raw stack trace.
 - `src/lib/pca.ts` for NIPALS PCA, run in a Web Worker with a synchronous fallback.
 - SVG for the benchmark curve and the 2D map; Canvas for the 3D map.
 - Split CSS: design tokens, base, layout, UI primitives, and one file per feature.
-- Vitest for the projection and formatting tests.
+- Vitest for routing, the data provider, theme persistence, dialogs, formatting, PCA,
+  and page behaviour (55 tests in 15 files).
+- A real-browser end-to-end suite (`scripts/e2e/`) against the built bundle, the HTTP
+  API, SQLite, and the HNSW index.
 - No Next.js, no server-side rendering, no charting SaaS.
 - No fake embedding function. The old `textToEmbedding` with `Math.random()` jitter is
   deleted, not hidden behind a flag.
@@ -301,8 +304,9 @@ the artifact.
    startup. The next step would be a graph snapshot or a concurrent read path, not a
    1M sweep."
 
-If the interviewer asks for the pruning detail, open the "Why diversity?" panel and
-draw the two-cluster example. Do not open a separate static site; there isn't one.
+If the interviewer asks for the pruning detail, walk through the two-cluster case in
+`backend/tests/unit/test_prune.cpp` and explain why the diversity heuristic keeps a
+bridge between the clusters. Do not open a separate static site; there isn't one.
 
 **Resume bullet template:**
 

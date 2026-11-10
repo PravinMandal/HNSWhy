@@ -1,6 +1,8 @@
 #include "product/providers.h"
 
+#include <atomic>
 #include <cmath>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -61,6 +63,27 @@ double norm(const std::vector<float>& values) {
     }
     return std::sqrt(sum);
 }
+
+// Server handlers run on httplib worker threads; collect headers behind a lock
+// so the test reads them without a data race.
+class AuthorizationRecorder {
+public:
+    void record(const httplib::Request& request) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        values_.push_back(request.has_header("Authorization")
+                              ? request.get_header_value("Authorization")
+                              : std::string());
+    }
+
+    std::vector<std::string> values() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return values_;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::vector<std::string> values_;
+};
 
 }  // namespace
 
@@ -125,6 +148,18 @@ HNSWHY_TEST(extractive_answer_cites_and_refuses) {
     CHECK_EQ(provider.answer(request), std::string(hnswhy::kNoAnswer));
 }
 
+HNSWHY_TEST(extractive_answer_preserves_decimal_numbers) {
+    hnswhy::ExtractiveChatProvider provider;
+    hnswhy::ChatRequest request;
+    request.question = "What recall did efSearch 10 reach?";
+    request.sources = {
+        {"Benchmark",
+         "At efSearch 10 the index reached 0.7998 recall at ten. Exact search reached 1.0."},
+    };
+    const std::string answer = provider.answer(request);
+    CHECK(answer.find("0.7998") != std::string::npos);
+}
+
 HNSWHY_TEST(provider_factory_defaults_and_config_errors) {
     hnswhy::EmbeddingConfig hash;
     hash.provider = "hash";
@@ -139,11 +174,85 @@ HNSWHY_TEST(provider_factory_defaults_and_config_errors) {
 
     hnswhy::EmbeddingConfig openai;
     openai.provider = "openai";
-    CHECK_THROWS_AS(hnswhy::create_embedding_provider(openai), hnswhy::ProductError);
+    // Keyless OpenAI-compatible servers (llama.cpp, vLLM, LM Studio) are valid;
+    // only send an Authorization header when a key is configured.
+    auto openai_embedder = hnswhy::create_embedding_provider(openai);
+    CHECK_EQ(openai_embedder->name(), std::string("openai"));
+    CHECK_EQ(openai_embedder->model(), std::string("text-embedding-3-small"));
+
+    hnswhy::ChatConfig openai_chat;
+    openai_chat.provider = "openai";
+    auto openai_chat_provider = hnswhy::create_chat_provider(openai_chat);
+    CHECK_EQ(openai_chat_provider->name(), std::string("openai"));
+    CHECK_EQ(openai_chat_provider->model(), std::string("gpt-4o-mini"));
 
     hnswhy::EmbeddingConfig unknown;
     unknown.provider = "does-not-exist";
     CHECK_THROWS_AS(hnswhy::create_embedding_provider(unknown), hnswhy::ProductError);
+}
+
+HNSWHY_TEST(openai_compatible_client_sends_authorization_only_with_a_key) {
+    FakeServer fake;
+    AuthorizationRecorder recorder;
+    fake.server().Post("/v1/embeddings",
+                       [&](const httplib::Request& request, httplib::Response& response) {
+                           recorder.record(request);
+                           response.set_content(
+                               json{{"data", json::array({{{"index", 0},
+                                                           {"embedding", unit_vector(3, 0)}}})}}
+                                   .dump(),
+                               "application/json");
+                       });
+    fake.start();
+
+    hnswhy::EmbeddingConfig keyless;
+    keyless.provider = "openai";
+    keyless.base_url = fake.base_url() + "/v1";
+    auto keyless_provider = hnswhy::create_embedding_provider(keyless);
+    CHECK_EQ(keyless_provider->embed({"first"}).size(), std::size_t{1});
+
+    hnswhy::EmbeddingConfig keyed = keyless;
+    keyed.api_key = "test-key";
+    auto keyed_provider = hnswhy::create_embedding_provider(keyed);
+    CHECK_EQ(keyed_provider->embed({"second"}).size(), std::size_t{1});
+
+    const std::vector<std::string> authorizations = recorder.values();
+    CHECK_EQ(authorizations.size(), std::size_t{2});
+    CHECK(authorizations[0].empty());
+    CHECK_EQ(authorizations[1], std::string("Bearer test-key"));
+}
+
+HNSWHY_TEST(openai_compatible_client_does_not_follow_redirects) {
+    FakeServer target;
+    std::atomic<int> target_hits{0};
+    target.server().Post("/v1/embeddings",
+                         [&](const httplib::Request&, httplib::Response& response) {
+                             ++target_hits;
+                             response.set_content(
+                                 json{{"data", json::array({{{"index", 0},
+                                                             {"embedding",
+                                                              unit_vector(3, 0)}}})}}
+                                     .dump(),
+                                 "application/json");
+                         });
+    target.start();
+
+    FakeServer redirect;
+    redirect.server().Post("/v1/embeddings",
+                           [&](const httplib::Request&, httplib::Response& response) {
+                               response.status = 302;
+                               response.set_header("Location",
+                                                   target.base_url() + "/v1/embeddings");
+                           });
+    redirect.start();
+
+    hnswhy::EmbeddingConfig config;
+    config.provider = "openai";
+    config.base_url = redirect.base_url() + "/v1";
+    config.api_key = "secret";
+    auto provider = hnswhy::create_embedding_provider(config);
+    CHECK_THROWS_AS(provider->embed({"first"}), hnswhy::ProductError);
+    CHECK_EQ(target_hits.load(), 0);
 }
 
 HNSWHY_TEST(ollama_client_speaks_embed_and_generate) {

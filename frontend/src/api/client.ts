@@ -106,7 +106,8 @@ function upload(
         onProgress(Math.round((event.loaded / event.total) * 100))
       }
     }
-    xhr.onerror = () => reject(new ApiError('Upload failed. Check the server and try again.'))
+    xhr.onerror = () =>
+      reject(new ApiError('Upload failed. Check the server and try again.', 'NETWORK_ERROR'))
     xhr.ontimeout = () =>
       reject(new ApiError('The upload timed out. Check the server and try again.', 'TIMEOUT'))
     xhr.onload = () => {
@@ -114,7 +115,13 @@ function upload(
       try {
         body = xhr.responseText ? JSON.parse(xhr.responseText) : {}
       } catch {
-        reject(new ApiError('The server returned an unreadable upload response.'))
+        reject(
+          new ApiError(
+            'The server returned an unreadable upload response.',
+            'INVALID_RESPONSE',
+            xhr.status,
+          ),
+        )
         return
       }
       if (xhr.status >= 200 && xhr.status < 300 && body.document) {

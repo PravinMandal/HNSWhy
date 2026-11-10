@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "framework/temp_path.h"
 #include "framework/test_framework.h"
 #include "product/errors.h"
 
@@ -13,27 +14,16 @@
 
 namespace {
 
+// Temporary files include a PID plus a per-process counter, so concurrent
+// test binaries or a reused PID cannot collide on a stale database.
 class TempDb {
 public:
-    explicit TempDb(const std::string& label) {
-        path_ = std::filesystem::temp_directory_path() /
-                ("hnswhy_store_" + std::to_string(::getpid()) + "_" + label + ".db");
-        cleanup();
-    }
+    explicit TempDb(const std::string& label) : path_(label + ".db") {}
 
-    ~TempDb() { cleanup(); }
-
-    const std::filesystem::path& path() const { return path_; }
+    const std::filesystem::path& path() const { return path_.path(); }
 
 private:
-    void cleanup() {
-        std::error_code error;
-        std::filesystem::remove(path_, error);
-        std::filesystem::remove(path_.string() + "-wal", error);
-        std::filesystem::remove(path_.string() + "-shm", error);
-    }
-
-    std::filesystem::path path_;
+    hnswhytest::TempPath path_;
 };
 
 std::vector<float> embedding(float first, float second = 0.0f) {
@@ -132,6 +122,20 @@ HNSWHY_TEST(document_store_delete_cascades_and_is_idempotent) {
     CHECK_EQ(remaining[0].id, second.document_id);
 }
 
+HNSWHY_TEST(document_store_refuses_a_second_writer) {
+    TempDb file("single-writer");
+    hnswhy::DocumentStore first(file.path());
+    // A second server on the same file would keep its own in-memory index and
+    // diverge from the first one, so opening must fail while the lock is held.
+    bool refused = false;
+    try {
+        hnswhy::DocumentStore second(file.path());
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    CHECK(refused);
+}
+
 HNSWHY_TEST(document_store_reopens_without_losing_data) {
     TempDb file("reopen");
     hnswhy::Id document_id = 0;
@@ -184,6 +188,46 @@ HNSWHY_TEST(document_store_replaces_embeddings_atomically) {
     CHECK_EQ(store.embedding_meta().dim, std::size_t{3});
 }
 
+HNSWHY_TEST(document_store_rolls_back_a_failed_embedding_replacement) {
+    TempDb file("replace_fail");
+    hnswhy::DocumentStore store(file.path());
+    const hnswhy::InsertResult inserted = store.insert_document(
+        "Replace", "seed", "text", {chunk("a", 1.0f), chunk("b", 2.0f)});
+
+    const auto before_chunks = store.load_embedded_chunks();
+    const hnswhy::EmbeddingMeta before_meta = store.embedding_meta();
+    CHECK_EQ(before_chunks.size(), std::size_t{2});
+
+    // The first replacement is valid and the second references a chunk that
+    // does not exist. SQLite's foreign key rejects it; the transaction must
+    // roll back the first row and the metadata update too.
+    const std::vector<hnswhy::StoredEmbedding> replacements = {
+        {inserted.chunk_ids[0], {0.0f, 1.0f, 0.0f}},
+        {999999, {0.0f, 0.0f, 1.0f}},
+    };
+    bool rejected = false;
+    try {
+        store.replace_embeddings(replacements, {"openai", "test", 3});
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    CHECK(rejected);
+
+    const auto after_chunks = store.load_embedded_chunks();
+    const hnswhy::EmbeddingMeta after_meta = store.embedding_meta();
+    CHECK_EQ(after_chunks.size(), before_chunks.size());
+    for (std::size_t i = 0; i < after_chunks.size(); ++i) {
+        CHECK_EQ(after_chunks[i].chunk_id, before_chunks[i].chunk_id);
+        CHECK_EQ(after_chunks[i].embedding.size(), before_chunks[i].embedding.size());
+        for (std::size_t j = 0; j < after_chunks[i].embedding.size(); ++j) {
+            CHECK_NEAR(after_chunks[i].embedding[j], before_chunks[i].embedding[j], 0.0);
+        }
+    }
+    CHECK_EQ(after_meta.provider, before_meta.provider);
+    CHECK_EQ(after_meta.model, before_meta.model);
+    CHECK_EQ(after_meta.dim, before_meta.dim);
+}
+
 HNSWHY_TEST(document_store_reports_incomplete_metadata_without_throwing) {
     TempDb file("badmeta");
     hnswhy::DocumentStore store(file.path());
@@ -217,6 +261,24 @@ HNSWHY_TEST(document_store_replaces_a_missing_embedding_row) {
     CHECK_EQ(chunks.size(), std::size_t{2});
     CHECK_EQ(chunks[1].embedding.size(), std::size_t{3});
     CHECK_NEAR(chunks[1].embedding[1], 1.0f, 1e-7);
+}
+
+HNSWHY_TEST(document_store_rejects_a_corrupt_embedding_blob) {
+    TempDb file("corrupt");
+    hnswhy::DocumentStore store(file.path());
+    const hnswhy::InsertResult inserted = store.insert_document(
+        "Corrupt", "seed", "text", {chunk("a", 1.0f)});
+
+    // The stored dimension disagrees with the blob length.
+    exec_sql(file.path(), "UPDATE embeddings SET dim = 3 WHERE chunk_id = " +
+                              std::to_string(inserted.chunk_ids[0]));
+    CHECK_THROWS_AS(store.load_embedded_chunks(), std::runtime_error);
+
+    // The dimension is plausible but the blob is truncated.
+    exec_sql(file.path(),
+             "UPDATE embeddings SET dim = 4, vector = x'0000' WHERE chunk_id = " +
+                 std::to_string(inserted.chunk_ids[0]));
+    CHECK_THROWS_AS(store.load_embedded_chunks(), std::runtime_error);
 }
 
 HNSWHY_TEST(document_store_samples_and_reports_stats) {
