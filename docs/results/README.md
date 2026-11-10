@@ -13,7 +13,9 @@ scripts/run_bench.sh      # builds release, computes ground truth, runs the swee
 ```
 
 The script writes `docs/results/bench.json`. Raw SIFT files and the generated
-100k ground truth stay in gitignored `data/`.
+100k ground truth stay in gitignored `data/`. The committed report was produced
+from commit `5ea6228` with `worktree_dirty: false`; provenance also records the
+input hashes, run id, compiler flags, and hardware.
 
 ## What was measured
 
@@ -35,16 +37,16 @@ The script writes `docs/results/bench.json`. Raw SIFT files and the generated
 
 | Metric | Value |
 |---|---:|
-| Recall@1 | 0.9926 |
-| Recall@10 | 0.9839 |
-| QPS | 6,895 |
-| p50 | 0.149 ms |
-| p95 | 0.184 ms |
-| p99 | 0.206 ms |
-| Build time | 36.1 s |
-| Peak RSS | 92.5 MB |
-| Exact QPS | 193.5 |
-| Speedup at this recall | ~35.6x |
+| Recall@1 | 0.9927 |
+| Recall@10 | 0.9836 |
+| QPS | 7,281 |
+| p50 | 0.142 ms |
+| p95 | 0.173 ms |
+| p99 | 0.184 ms |
+| Build time | 33.4 s |
+| Peak RSS | 93.1 MB |
+| Exact QPS | 200.9 |
+| Speedup at this recall | ~36.2x |
 
 Peak RSS is whole-process RSS: it includes the 51.2 MB base prefix, 5.2 MB of
 queries, the 8 MB ground-truth arrays, and the graph. It is not an isolated
@@ -54,12 +56,12 @@ index-size measurement.
 
 | efSearch | R@1 | R@10 | QPS | p50 ms | p95 ms | p99 ms |
 |---:|---:|---:|---:|---:|---:|---:|
-| 10 | 0.8747 | 0.7998 | 21,274 | 0.046 | 0.065 | 0.076 |
-| 20 | 0.9562 | 0.9126 | 13,721 | 0.073 | 0.096 | 0.109 |
-| 50 | 0.9926 | 0.9839 | 6,895 | 0.149 | 0.184 | 0.206 |
-| 100 | 0.9986 | 0.9967 | 3,986 | 0.258 | 0.322 | 0.355 |
-| 200 | 0.9998 | 0.9996 | 2,283 | 0.450 | 0.577 | 0.646 |
-| exact | 1.0000 | 1.0000 | 193.5 | 5.049 | 5.682 | 6.521 |
+| 10 | 0.8779 | 0.7989 | 22,026 | 0.045 | 0.063 | 0.072 |
+| 20 | 0.9558 | 0.9123 | 14,387 | 0.070 | 0.090 | 0.102 |
+| 50 | 0.9927 | 0.9836 | 7,281 | 0.142 | 0.173 | 0.184 |
+| 100 | 0.9985 | 0.9966 | 4,177 | 0.247 | 0.305 | 0.328 |
+| 200 | 0.9998 | 0.9996 | 2,435 | 0.424 | 0.530 | 0.565 |
+| exact | 1.0000 | 1.0000 | 200.9 | 4.911 | 5.245 | 5.854 |
 
 These are local measurements, not cloud numbers. They must not be copied into
 marketing material for other hardware or another dataset. When the code or

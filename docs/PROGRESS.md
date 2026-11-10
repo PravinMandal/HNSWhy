@@ -118,9 +118,9 @@ config, build time, RSS, recall, QPS, latency percentiles, distance counts,
 compiler and hardware.
 
 SIFT-100k ground truth (10k queries, top 100) was generated with `hns_gt`.
-Release run: build 36.1 s, peak RSS 92.5 MB. At `efSearch=50`,
-**R@1 0.9926, R@10 0.9839, 6,895 QPS**, p95 0.184 ms, versus exact search at
-193.5 QPS — a 35.6x speedup at that recall. The exact baseline matched the
+Release run: build 33.4 s, peak RSS 93.1 MB. At `efSearch=50`,
+**R@1 0.9927, R@10 0.9836, 7,281 QPS**, p95 0.173 ms, versus exact search at
+200.9 QPS — a 36.2x speedup at that recall. The exact baseline matched the
 ground-truth distances. `docs/results/bench.json` holds the full curve.
 
 ### Phase 5 — product backend (done)

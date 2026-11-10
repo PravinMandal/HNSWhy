@@ -27,8 +27,8 @@ The one-sentence version, measured on the shipped report:
 
 > "HNSWhy answers questions over uploaded documents using a from-scratch HNSW
 > index. On 100,000 SIFT vectors, the same engine found **98.4%** of the true top-10
-> at **6,895** queries per second, while exact search did **193.5** QPS — a measured
-> **35.6×** speedup at that recall, with a reproducible command."
+> at **7,281** queries per second, while exact search did **200.9** QPS — a measured
+> **36.2×** speedup at that recall, with a reproducible command."
 
 The numbers come from `docs/results/bench.json`.
 
@@ -826,7 +826,7 @@ v1 claim.
 - [x] Persistence: restart preserves documents and search results.
 - [x] Engine: BF, HNSW insert/search/prune, directed graph, mark-deleted, `validate()`.
 - [x] Tests green, including sift10k, two-cluster, mark-delete, persistence, and API tests.
-- [x] `sift100k` HNSW R@10 = 0.9839 (> 0.90), 10k queries, three timed passes.
+- [x] `sift100k` HNSW R@10 = 0.9836 (> 0.90), 10k queries, three timed passes.
 - [x] `bench.json` with config, compiler, hardware, dataset, trials, summary.
 - [x] README: short documented setup, real numbers, no placeholders, limitations, CPU/RAM.
 - [x] Benchmark tab: real report, parameters, command; no invented chart.

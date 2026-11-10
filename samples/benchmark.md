@@ -14,7 +14,7 @@ Each query is run multiple times with a warmup pass, and the median or aggregate
 
 ## What the numbers mean
 
-On the recorded SIFT-100k run, HNSW with `efSearch = 50` reached about 0.993 Recall@1 and 0.984 Recall@10 at roughly 6,895 queries per second. The exact brute-force baseline reached perfect recall at roughly 193 queries per second. Increasing `efSearch` to 200 pushed Recall@1 to about 0.9998 while reducing throughput to roughly 2,283 queries per second. These are measured results from one machine, not universal guarantees.
+On the recorded SIFT-100k run, HNSW with `efSearch = 50` reached about 0.993 Recall@1 and 0.984 Recall@10 at roughly 7,281 queries per second. The exact brute-force baseline reached perfect recall at roughly 201 queries per second. Increasing `efSearch` to 200 pushed Recall@1 to about 0.9998 while reducing throughput to roughly 2,435 queries per second. These are measured results from one machine, not universal guarantees.
 
 The important comparison is the shape of the curve, not a single headline number. A user can choose a point on the latency-recall curve that fits the application. For a question answering system, high recall at moderate latency is usually more valuable than the absolute fastest query. For an interactive map or autocomplete feature, a lower `efSearch` may be appropriate.
 

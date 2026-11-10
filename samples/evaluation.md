@@ -16,7 +16,7 @@ Build time and peak resident memory are reported alongside query metrics. A fast
 
 ## Reading the curve
 
-On SIFT-100k with 128-dimensional vectors, HNSW at `efSearch = 50` reached roughly 0.993 Recall@1 and 0.984 Recall@10 at about 6,895 queries per second. At `efSearch = 10` it reached about 0.875 Recall@1 at roughly 21,000 queries per second. At `efSearch = 200` recall rose to about 0.9998 while throughput fell to roughly 2,283 queries per second. Exact brute force reached perfect recall at about 193 queries per second.
+On SIFT-100k with 128-dimensional vectors, HNSW at `efSearch = 50` reached roughly 0.993 Recall@1 and 0.984 Recall@10 at about 7,281 queries per second. At `efSearch = 10` it reached about 0.878 Recall@1 at roughly 22,000 queries per second. At `efSearch = 200` recall rose to about 0.9998 while throughput fell to roughly 2,435 queries per second. Exact brute force reached perfect recall at about 201 queries per second.
 
 The useful output is the whole trade-off curve, not one number. A question answering product usually prefers high recall at interactive latency. A visual map or autocomplete feature can tolerate lower recall for faster responses. The benchmark page shows the measured points and never estimates missing ones.
 

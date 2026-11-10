@@ -27,8 +27,8 @@ point is the pair:
 
 > HNSWhy answers questions over uploaded documents using a from-scratch HNSW
 > index. On 100,000 SIFT vectors, the same engine found **98.4%** of the true top-10 at
-> **6,895** queries per second, while exact search did **193.5** QPS — a measured
-> **35.6×** throughput improvement at that recall.
+> **7,281** queries per second, while exact search did **200.9** QPS — a measured
+> **36.2×** throughput improvement at that recall.
 
 The query is embedded with the same provider as the corpus. The retrieved chunks are
 loaded from SQLite, passed to the chat provider as numbered sources, and returned with
@@ -44,19 +44,19 @@ SIFT-100k, 10,000 queries, 128 dimensions, `M=16`, `M0=32`,
 
 | Dataset | N | Queries | R@1 | R@10 | QPS | p50 | p95 | p99 | Build | Peak RSS |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| SIFT-100k, `efSearch=50` | 100,000 | 10,000 | 0.9926 | 0.9839 | 6,895 | 0.149 ms | 0.184 ms | 0.206 ms | 36.1 s | 92.5 MB |
-| SIFT-100k, exact | 100,000 | 10,000 | 1.0000 | 1.0000 | 193.5 | 5.049 ms | 5.682 ms | 6.521 ms | — | — |
+| SIFT-100k, `efSearch=50` | 100,000 | 10,000 | 0.9927 | 0.9836 | 7,281 | 0.142 ms | 0.173 ms | 0.184 ms | 33.4 s | 93.1 MB |
+| SIFT-100k, exact | 100,000 | 10,000 | 1.0000 | 1.0000 | 200.9 | 4.911 ms | 5.245 ms | 5.854 ms | — | — |
 
 Full sweep:
 
 | efSearch | R@1 | R@10 | QPS | p50 ms | p95 ms |
 |---:|---:|---:|---:|---:|---:|
-| 10 | 0.8747 | 0.7998 | 21,274 | 0.046 | 0.065 |
-| 20 | 0.9562 | 0.9126 | 13,721 | 0.073 | 0.096 |
-| 50 | 0.9926 | 0.9839 | 6,895 | 0.149 | 0.184 |
-| 100 | 0.9986 | 0.9967 | 3,986 | 0.258 | 0.322 |
-| 200 | 0.9998 | 0.9996 | 2,283 | 0.450 | 0.577 |
-| exact | 1.0000 | 1.0000 | 193.5 | 5.049 | 5.682 |
+| 10 | 0.8779 | 0.7989 | 22,026 | 0.045 | 0.063 |
+| 20 | 0.9558 | 0.9123 | 14,387 | 0.070 | 0.090 |
+| 50 | 0.9927 | 0.9836 | 7,281 | 0.142 | 0.173 |
+| 100 | 0.9985 | 0.9966 | 4,177 | 0.247 | 0.305 |
+| 200 | 0.9998 | 0.9996 | 2,435 | 0.424 | 0.530 |
+| exact | 1.0000 | 1.0000 | 200.9 | 4.911 | 5.245 |
 
 Environment: GCC 16.2.1, `Release -O3`, 12th Gen Intel Core i5-12450H, 12 hardware
 threads, Linux 7.2.11, AVX2 disabled for this run. These are local measurements, not

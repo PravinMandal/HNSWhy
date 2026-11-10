@@ -44,8 +44,8 @@ The one-sentence version, measured on the shipped report:
 
 > "HNSWhy answers questions over uploaded documents using a from-scratch HNSW
 > index. On 100,000 SIFT vectors, the same engine found **98.4%** of the true top-10
-> at **6,895** queries per second, while exact search did **193.5** QPS — a measured
-> **35.6×** speedup at that recall, with a reproducible command."
+> at **7,281** queries per second, while exact search did **200.9** QPS — a measured
+> **36.2×** speedup at that recall, with a reproducible command."
 
 Those numbers come from `docs/results/bench.json`. They are not illustrative.
 
@@ -152,7 +152,7 @@ ground truth is generated locally by `scripts/run_bench.sh` and stays in gitigno
 | Persistence works | restart preserves documents and search results; delete survives restart |
 | Engine works | BF = answer key; HNSW recall gate; directed graph; mark-deleted; `validate()` |
 | Tests green | unit/invariant, sift10k fixture, two-cluster, mark-delete, persistence/restart, API, frontend helpers, API + browser E2E |
-| 100k measured | `sift100k` R@10 = 0.9839, 10k queries, 3 timed passes per curve point |
+| 100k measured | `sift100k` R@10 = 0.9836, 10k queries, 3 timed passes per curve point |
 | Artifact exists | `bench.json` with config, compiler, hardware, dataset, build time, RSS, and trials |
 | README | short documented setup, real numbers, limitations, no placeholders |
 | Demo | 60 seconds, no code edits, no fake data |
