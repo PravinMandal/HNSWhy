@@ -5,7 +5,7 @@
 #include <limits>
 #include <vector>
 
-namespace vf {
+namespace hnswhy {
 
 using Slot = std::uint32_t;
 
@@ -29,4 +29,4 @@ struct SearchResult {
     SearchStats stats;
 };
 
-}  // namespace vf
+}  // namespace hnswhy

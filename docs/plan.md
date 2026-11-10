@@ -1,13 +1,16 @@
-# VectorForge / HNSWhy — Plan (v3)
+# HNSWhy — Plan (v3)
 
 > **This is the deep reference, not the build order.** The canonical scope is
 > `DECISIONS.md`; the component map is `ARCHITECTURE.md`; the algorithm contract is
 > `HNSW-SPEC.md`. If this file conflicts with `DECISIONS.md`, `DECISIONS.md` wins.
 >
-> **Status: planning and merge.** No engine code yet. The frontend source exists in
-> the separate VectorForge project and will be imported and refactored as `frontend/`.
+> **Status: historical v3 plan, now implemented.** v1 shipped; `docs/PROGRESS.md`
+> records the actual state and measured results. Planning estimates in this file are
+> not release claims. The shipped implementation added PDF extraction and a 3D map,
+> and used the offline providers by default; where this file says otherwise, the
+> shipped code and `DECISIONS.md` D21–D29 win.
 >
-> **Last updated:** 2026-11-09.
+> **Last updated:** 2026-11-10 (status note); plan written 2026-11-09.
 
 ---
 
@@ -20,14 +23,14 @@ The name still means **HNSW + why**. If you cannot say why `M=16`, why
 `efConstruction=200`, why the graph is directed, or why the product rebuilds its index
 from SQLite, using your own numbers and your own words, it is not yours yet.
 
-The one-sentence version, with placeholders until the release run:
+The one-sentence version, measured on the shipped report:
 
-> "VectorForge answers questions over uploaded documents using a from-scratch HNSW
-> index. On 100,000 SIFT vectors, the same engine found **R%** of the true top-10 at
-> **Q** queries per second, while exact search did **B** QPS — a measured **S×**
-> speedup at that recall, with a reproducible command."
+> "HNSWhy answers questions over uploaded documents using a from-scratch HNSW
+> index. On 100,000 SIFT vectors, the same engine found **98.4%** of the true top-10
+> at **6,895** queries per second, while exact search did **193.5** QPS — a measured
+> **35.6×** speedup at that recall, with a reproducible command."
 
-No number goes in that sentence until it comes from a frozen `bench.json`.
+The numbers come from `docs/results/bench.json`.
 
 ---
 
@@ -36,34 +39,37 @@ No number goes in that sentence until it comes from a frozen `bench.json`.
 ### 1.1 What ships
 
 1. **Product:** React UI with Documents, Ask, Map, and Benchmark tabs. Upload/paste,
-   list, delete, ask, cited answers, 2D map, benchmark report.
-2. **Engine:** `vf_engine` static library — flat `VectorStore`, squared L2, brute
+   PDF/TXT/Markdown, list, delete, ask, cited answers, 2D and 3D map, benchmark report.
+2. **Engine:** `hnswhy_engine` static library — flat `VectorStore`, squared L2, brute
    force, HNSW insert/search/prune, directed adjacency, mark-deleted, `validate()`.
 3. **Persistence:** SQLite is the source of truth for documents, chunks, and
    embeddings; the graph is rebuilt on startup.
 4. **Benchmark:** `hns_bench` reads SIFT, builds once, runs the `efSearch` grid with
    three timed passes per point over 10,000 queries, and writes `bench.json`.
-5. **Tests:** unit/invariant tests, two-cluster prune test, mark-delete test,
-   persistence/restart test, API test with a fake Ollama, benchmark schema test.
+5. **Tests:** unit/invariant tests, sift10k fixture, two-cluster prune test,
+   mark-delete test, persistence/restart test, API test, and frontend helper tests.
 6. **Docs:** README with real numbers and limitations; architecture, decisions,
    spec, plan, and product/showcase docs that match the code.
-7. **Run:** documented local setup; clear Ollama requirements; no auth in v1.
+7. **Run:** documented local setup, offline defaults, configurable Ollama/OpenAI
+   providers, no auth in v1.
 
 ### 1.2 What does not ship in v1
 
 The cut list is `DECISIONS.md` D20. In short:
 
 - no 1M sweep (one optional run after v1);
-- no KD-tree, 3D map, multi-metric benchmark, or cosine-specific index;
+- no KD-tree, multi-metric benchmark, or cosine-specific index;
 - no physical graph deletion or compaction (SQLite rows are deleted; the in-memory
   node is mark-deleted);
 - no graph snapshot/load;
 - no concurrent engine access;
 - no auth, multi-user, or tenancy;
-- no PDF extraction (plain text and Markdown only);
 - no agents, Graph RAG, or tool calling;
 - no distributed search;
 - no static showcase site, trace-replay page, or live benchmark endpoint.
+
+PDF extraction and the 3D map were originally on this list and shipped in v1; see
+`DECISIONS.md` D14, D20, and D23.
 
 Each returns only with a new decision entry and a reason tied to a user or a
 measurement.
@@ -398,9 +404,11 @@ evidence.
 
 ### 6.6 Map
 
-Backend samples up to 2,000 live chunks (default 1,000) and returns their vectors plus
-metadata. Frontend computes 2D PCA and draws the points. The map is labelled as a 2D
-projection; it is not a benchmark.
+Backend samples up to 2,000 live chunks (the UI requests 1,200) and returns their
+vectors plus metadata. Frontend computes a NIPALS PCA and draws the points in 2D (SVG)
+or 3D (canvas); both are projections of the same sampled embeddings. The map is
+labelled with the source and projected dimensions. It is not a benchmark and it does
+not draw HNSW edges.
 
 ### 6.7 API and auth
 
@@ -513,7 +521,18 @@ product + the HNSW row, not the ablation.
 `hns_bench` writes one `bench.json`. The release artifact is committed as
 `docs/results/bench.json`; the raw dataset stays in gitignored `data/`. The UI reads it
 through `/api/benchmark`. The schema is intentionally smaller than the old
-CSV/manifest ceremony:
+CSV/manifest ceremony.
+
+> **Shipped schema note.** The JSON sketch below is the original planning shape. The
+> committed `docs/results/bench.json` uses the actual keys: `schema_version`,
+> `generated_at_utc`, `engine`, `dataset` (base/query files, counts, dim, GT file),
+> `config` (M, M0, efConstruction, distance, k, seed, passes, warmup), `build`
+> (build time, RSS), `environment` (compiler, CPU, OS, threads, AVX2), and `methods`
+> (one row per HNSW `efSearch` plus the exact baseline, with recall, QPS, latency
+> percentiles, and distance computations). It does not carry a git commit, dirty flag,
+> or dataset hashes; those were planned but not emitted by the shipped benchmark.
+
+Original planning sketch (not the shipped schema):
 
 ```json
 {
@@ -620,20 +639,17 @@ CSV/manifest ceremony:
 }
 ```
 
-Rules:
+Rules (shipped):
 
-- Every report carries commit, dirty flag, hashes, flags, thread count, and machine.
-- `schema` is an integer; bump it on any change.
-- `git.commit` is the full 40-character SHA, not an abbreviation.
-- `summary` carries the mean and the min/max across timed passes; `trials` carries the
-  raw per-pass rows. The README range is read from `summary`, not recomputed in the UI.
-- `curve` is measured on the report dataset at each `--ef-grid` value; each point is
-  the mean of the same three-pass protocol. `trials` holds the raw passes for the
-  headline `params.efSearch` only. Do not pick the best curve point after the fact: the
-  headline is the pre-registered SLO point.
-- The validator refuses missing required fields and `dirty=true` for a published
-  report.
-- The README table and Benchmark tab read `summary`; they never recompute a headline.
+- The report carries config, compiler, CPU, OS, thread count, dataset paths and
+  counts, build time, peak RSS, and one row per measured method. It does not carry a
+  git commit or dataset hashes.
+- `schema_version` is an integer; bump it on any change.
+- `methods` rows include `queries_measured`, so a 10,000-query baseline and a
+  30,000-query HNSW row are not confused.
+- The validator refuses missing required fields.
+- The README table and Benchmark tab read the committed report; they never recompute a
+  headline.
 - A per-query sidecar is optional and not required for v1. If it exists, it is an
   audit aid, not the product.
 
@@ -643,7 +659,7 @@ Rules:
 
 ### 9.1 Per-PR
 
-- Build `vf_engine`, `vectorforge_server`, `hns_bench`, `hns_tests`.
+- Build `hnswhy_engine`, `hnswhy_server`, `hns_bench`, `hns_tests`.
 - Run unit/invariant tests.
 - Run recall on `sift10k` with our own GT: 1,000 fixed queries, `R@10 ≥ 0.90`,
   labelled `PRELIMINARY`.
@@ -761,7 +777,7 @@ Report the measured ratio; do not promise a number. Build time is dominated by
 ## 12. Build and tooling
 
 - C++20, CMake ≥ 3.20, Ninja, g++ or clang++.
-- `vf_engine` (no SQL/HTTP/Ollama), `vectorforge_server`, `hns_bench`, `hns_tests`.
+- `hnswhy_engine` (no SQL/HTTP/Ollama), `hnswhy_server`, `hns_bench`, `hns_tests`.
 - SQLite3 system library; `cpp-httplib` and `nlohmann/json` header-only.
 - Ollama running locally for the product; not required for the benchmark or tests.
 - Frontend: existing React/Vite; `npm ci && npm run build`.
@@ -788,7 +804,7 @@ starts to contain HNSW or SQL logic, move that logic to `engine/` or `product/`.
    corrupt-one-byte test; never the source of truth.
 3. **Physical compaction** — after mark-deleted is stable; connectivity tests.
 4. **Concurrent read path** — coarse `shared_mutex` + TSan; only with a real consumer.
-5. **PDF extraction** — a text extraction dependency, with a failure path.
+5. **PDF extraction** — shipped in v1 via `pdftotext` (D23).
 6. **Auth / access gate** — before any public multi-user deployment.
 7. **Reranker or hybrid search** — measured on the product set, not folded into the
    SIFT claim.
@@ -805,17 +821,17 @@ v1 claim.
 
 ## 14. Definition of done
 
-- [ ] Product: upload/paste, list, delete, ask, citations, 2D map, benchmark tab.
-- [ ] Persistence: restart preserves documents and search results.
-- [ ] Engine: BF, HNSW insert/search/prune, directed graph, mark-deleted, `validate()`.
-- [ ] Tests green, including two-cluster, mark-delete, persistence, and API tests.
-- [ ] `sift100k` HNSW R@10 ≥ 0.90, 10k queries, three timed passes.
-- [ ] `bench.json` with commit, hashes, flags, machine, trials, summary.
-- [ ] README: short documented setup, real numbers, no placeholders, limitations, CPU/RAM.
-- [ ] Benchmark tab: real report, parameters, command; no invented chart.
-- [ ] No fake embeddings, no hardcoded speedup, no "production-grade" claim.
+- [x] Product: upload/paste, PDF/TXT/Markdown, list, delete, ask, citations, 2D/3D map, benchmark tab.
+- [x] Persistence: restart preserves documents and search results.
+- [x] Engine: BF, HNSW insert/search/prune, directed graph, mark-deleted, `validate()`.
+- [x] Tests green, including sift10k, two-cluster, mark-delete, persistence, and API tests.
+- [x] `sift100k` HNSW R@10 = 0.9839 (> 0.90), 10k queries, three timed passes.
+- [x] `bench.json` with config, compiler, hardware, dataset, trials, summary.
+- [x] README: short documented setup, real numbers, no placeholders, limitations, CPU/RAM.
+- [x] Benchmark tab: real report, parameters, command; no invented chart.
+- [x] No fabricated embeddings, no hardcoded speedup, no "production-grade" claim.
 - [ ] 20-minute whiteboard and 60-second demo, no notes.
-- [ ] `DECISIONS.md` matches the implementation; no silent scope creep.
+- [x] `DECISIONS.md` matches the implementation; no silent scope creep.
 - [ ] Final tag; optional 1M row clearly separated.
 
 If only the engine works, the project is a measured index without a product. If only
@@ -823,20 +839,19 @@ the product works, it is a RAG wrapper without depth. v1 is the pair.
 
 ---
 
-## 15. Open questions
+## 15. Open questions (resolved in v1)
 
-1. **Embedding model default:** `nomic-embed-text` (768-d) or a smaller model for
-   speed. Pick one, record the dimension, and make it configurable.
-2. **Chunk size:** start at ~350 words with ~50-word overlap; measure retrieval on a
-   small labeled set before tuning.
-3. **LLM default:** a local Ollama model that fits the demo machine; make it an env
-   var, not a hardcoded prompt dependency.
-4. **PDF extraction:** after v1. Plain text and Markdown prove the flow.
-5. **Public deployment:** a local documented run is v1; a public demo needs an access
-   gate and a host that can run Ollama.
-6. **Graph snapshot:** only after the product rebuild is measured and stable.
-7. **Product size target:** 10k chunks is comfortable; 100k is the upper end. Revisit
-   after measuring startup and search latency.
-8. **Map sample size:** default 1,000, cap 2,000. Revisit if the payload is slow.
+1. **Embedding model default:** resolved to the offline `local-hash-v1` (256-d) for a
+   dependency-free demo; Ollama and OpenAI-compatible providers are configurable
+   (D21, D22).
+2. **Chunk size:** shipped at a word-boundary target with overlap; recorded in the
+   chunker and covered by tests.
+3. **LLM default:** resolved to `local-extractive-v1` offline; configurable (D21).
+4. **PDF extraction:** shipped via `pdftotext` (D23).
+5. **Public deployment:** still after v1; the documented run is local.
+6. **Graph snapshot:** still deferred; SQLite rebuild is the shipped path.
+7. **Product size target:** the map samples at most 2,000 points; product search is
+   bounded by the in-memory index, not the UI.
+8. **Map sample size:** shipped default request 1,200, server cap 2,000.
 
 When an open question is resolved, add a `DECISIONS.md` entry and link it here.

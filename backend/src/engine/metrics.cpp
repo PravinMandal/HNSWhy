@@ -4,7 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace vf {
+namespace hnswhy {
 
 double tie_aware_recall_at_k(std::span<const float> result_distances,
                              std::span<const float> truth_distances, std::size_t k) {
@@ -29,8 +29,13 @@ double percentile(std::vector<double> samples, double p) {
     if (samples.empty()) {
         return 0.0;
     }
-    if (p < 0.0 || p > 100.0) {
-        throw std::invalid_argument("percentile: p must be in [0, 100]");
+    if (!std::isfinite(p) || p < 0.0 || p > 100.0) {
+        throw std::invalid_argument("percentile: p must be finite and in [0, 100]");
+    }
+    for (const double sample : samples) {
+        if (!std::isfinite(sample)) {
+            throw std::invalid_argument("percentile: samples must be finite");
+        }
     }
     std::sort(samples.begin(), samples.end());
     const std::size_t rank =
@@ -47,12 +52,24 @@ LatencySummary summarize_latency(std::vector<double> samples_ms) {
     LatencySummary summary;
     double total = 0.0;
     for (const double sample : samples_ms) {
+        if (!std::isfinite(sample) || sample < 0.0) {
+            throw std::invalid_argument("summarize_latency: samples must be finite and non-negative");
+        }
         total += sample;
     }
     summary.mean = total / static_cast<double>(samples_ms.size());
-    summary.p50 = percentile(samples_ms, 50.0);
-    summary.p95 = percentile(samples_ms, 95.0);
-    summary.p99 = percentile(samples_ms, 99.0);
+
+    std::sort(samples_ms.begin(), samples_ms.end());
+    auto percentile_of_sorted = [&samples_ms](double p) {
+        const std::size_t rank = static_cast<std::size_t>(
+            std::ceil(p / 100.0 * static_cast<double>(samples_ms.size())));
+        const std::size_t index =
+            std::min(samples_ms.size() - 1, rank == 0 ? 0 : rank - 1);
+        return samples_ms[index];
+    };
+    summary.p50 = percentile_of_sorted(50.0);
+    summary.p95 = percentile_of_sorted(95.0);
+    summary.p99 = percentile_of_sorted(99.0);
     return summary;
 }
 
@@ -63,4 +80,4 @@ double queries_per_second(std::size_t query_count, double elapsed_seconds) {
     return static_cast<double>(query_count) / elapsed_seconds;
 }
 
-}  // namespace vf
+}  // namespace hnswhy

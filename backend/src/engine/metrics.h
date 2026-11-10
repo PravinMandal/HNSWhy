@@ -4,7 +4,7 @@
 #include <span>
 #include <vector>
 
-namespace vf {
+namespace hnswhy {
 
 // Recall@k with distance ties counted as hits. The k-th truth distance is the
 // cutoff; a returned distance within eps of it is as good as a correct ID,
@@ -26,4 +26,4 @@ LatencySummary summarize_latency(std::vector<double> samples_ms);
 
 double queries_per_second(std::size_t query_count, double elapsed_seconds);
 
-}  // namespace vf
+}  // namespace hnswhy

@@ -13,7 +13,7 @@ struct TempPath {
     std::filesystem::path path;
 
     explicit TempPath(const std::string& name)
-        : path(std::filesystem::temp_directory_path() / ("vf_bench_" + name)) {
+        : path(std::filesystem::temp_directory_path() / ("hnswhy_bench_" + name)) {
         std::filesystem::remove(path);
     }
 
@@ -25,8 +25,8 @@ struct TempPath {
 
 }  // namespace
 
-VF_TEST(bench_report_writes_stable_json_schema) {
-    vf::BenchReport report;
+HNSWHY_TEST(bench_report_writes_stable_json_schema) {
+    hnswhy::BenchReport report;
     report.dataset.name = "unit-fixture";
     report.dataset.base_file = "base.fvecs";
     report.dataset.base_count = 123;
@@ -51,7 +51,7 @@ VF_TEST(bench_report_writes_stable_json_schema) {
     report.build.rss_after_build_mb = 34.5;
     report.build.peak_rss_mb = 40.0;
 
-    vf::MethodReport hnsw;
+    hnswhy::MethodReport hnsw;
     hnsw.name = "hnsw";
     hnsw.ef_search = 50;
     hnsw.queries_measured = 21;
@@ -62,7 +62,7 @@ VF_TEST(bench_report_writes_stable_json_schema) {
     hnsw.avg_distance_computations = 800.0;
     report.methods.push_back(hnsw);
 
-    vf::MethodReport exact;
+    hnswhy::MethodReport exact;
     exact.name = "bruteforce";
     exact.queries_measured = 7;
     exact.recall_at_1 = 1.0;
@@ -73,7 +73,7 @@ VF_TEST(bench_report_writes_stable_json_schema) {
     report.methods.push_back(exact);
 
     TempPath output("report.json");
-    vf::write_bench_json(output.path, report);
+    hnswhy::write_bench_json(output.path, report);
 
     std::ifstream in(output.path);
     CHECK(static_cast<bool>(in));

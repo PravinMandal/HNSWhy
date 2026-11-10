@@ -1,12 +1,13 @@
-# VectorForge / HNSWhy — START HERE
+# HNSWhy — START HERE
 
 > Read this first. It is the on-ramp, not the spec. The canonical decisions are in
 > `DECISIONS.md`; the architecture is in `ARCHITECTURE.md`; the algorithm contract is
 > `HNSW-SPEC.md`; the deep reference is `plan.md`.
 >
-> **Status: planning and merge.** No engine code exists in this repo yet. The
-> frontend source exists in the separate VectorForge project and will be imported and
-> refactored as `frontend/`. The goal and scope are fixed; the pace is yours.
+> **Status: v1 shipped.** The engine, product backend, React frontend, sample
+> knowledge base, tests, and the frozen SIFT-100k report are all in this repository.
+> `docs/PROGRESS.md` records the shipped state. This file remains the on-ramp: what
+> the project is, how it is measured, and what "done" means.
 >
 > **Revision note.** This file replaces the old benchmark-only on-ramp. The old lock
 > — no server, no persistence, no delete, no RAG, static showcase — is superseded by
@@ -39,14 +40,14 @@ The final artifact is:
 4. a SIFT-100k benchmark with a recall–QPS curve and real numbers;
 5. a README a stranger can reproduce.
 
-The one-sentence version, with placeholders until the release run:
+The one-sentence version, measured on the shipped report:
 
-> "VectorForge answers questions over uploaded documents using a from-scratch HNSW
-> index. On 100,000 SIFT vectors, the same engine found **R%** of the true top-10 at
-> **Q** queries per second, while exact search did **B** QPS — a measured **S×**
-> speedup at that recall, with a reproducible command."
+> "HNSWhy answers questions over uploaded documents using a from-scratch HNSW
+> index. On 100,000 SIFT vectors, the same engine found **98.4%** of the true top-10
+> at **6,895** queries per second, while exact search did **193.5** QPS — a measured
+> **35.6×** speedup at that recall, with a reproducible command."
 
-No number goes in that sentence until it comes from a frozen `bench.json`.
+Those numbers come from `docs/results/bench.json`. They are not illustrative.
 
 ---
 
@@ -91,13 +92,13 @@ version that gives a stranger something to use and a recruiter something to chec
 
 | Area | Ships in v1 | Deferred |
 |---|---|---|
-| Product | upload/paste, list, delete, ask, citations, 2D map, benchmark tab | auth, multi-user, PDF, agents, Graph RAG |
+| Product | upload/paste, PDF/TXT/Markdown, list, delete, ask, citations, 2D and 3D map, benchmark tab | auth, multi-user, agents, Graph RAG |
 | Persistence | SQLite source of truth; HNSW rebuilt on startup | graph snapshot, physical compaction |
 | Engine | flat store, squared L2, brute force, HNSW insert/search/prune, directed graph, mark-deleted | concurrency, filtering, quantization, range search |
 | Evidence | SIFT-100k, 10k queries, 3 timed passes per curve point, `bench.json` | 1M sweep, multi-metric, KD-tree, cosine index |
-| Showcase | the product UI itself | static site, 3D map, trace-replay page |
+| Showcase | the product UI itself, including the 3D map | static site, trace-replay page |
 | Ops | documented local run, documented Ollama setup | public deployment, Docker, auth gate |
-| Tests | unit/invariant, two-cluster, mark-delete, persistence, API | fuzzing, allocator tests, TSan |
+| Tests | unit/invariant, two-cluster, mark-delete, persistence, API, sift10k fixture, frontend helpers | fuzzing, allocator tests, TSan |
 
 Why 100k? It is 51.2 MB of vectors, builds in minutes, and lets you iterate. 1M is
 512 MB and makes every brute-force pass and rebuild 10× more expensive. A valid 100k
@@ -137,8 +138,9 @@ independent correctness evidence.
 
 The self-contained CI bundle lives under `tests/fixtures/sift10k/`: the first 10k
 base, a fixed 1k query set, GT IDs + distances, query IDs, and SHA-256. The 100k
-fixture contains GT + IDs + hashes only; the 100k base stays local. Full datasets stay
-in gitignored `data/`.
+ground truth is generated locally by `scripts/run_bench.sh` and stays in gitignored
+`data/sift100k/`; the 100k base is not committed. Full datasets stay in gitignored
+`data/`.
 
 ---
 
@@ -146,12 +148,12 @@ in gitignored `data/`.
 
 | Outcome | Must be true |
 |---|---|
-| Product works | upload/paste, list, delete, ask, citations, map, benchmark tab |
+| Product works | upload/paste, PDF/TXT/Markdown, list, delete, ask, citations, 2D/3D map, benchmark tab |
 | Persistence works | restart preserves documents and search results; delete survives restart |
 | Engine works | BF = answer key; HNSW recall gate; directed graph; mark-deleted; `validate()` |
-| Tests green | two-cluster, mark-delete, persistence/restart, API with fake Ollama |
-| 100k measured | `sift100k` R@10 ≥ 0.90, 10k queries, 3 timed passes per curve point |
-| Artifact exists | `bench.json` with commit, hashes, flags, machine, trials |
+| Tests green | unit/invariant, sift10k fixture, two-cluster, mark-delete, persistence/restart, API, frontend helpers |
+| 100k measured | `sift100k` R@10 = 0.9839, 10k queries, 3 timed passes per curve point |
+| Artifact exists | `bench.json` with config, compiler, hardware, dataset, build time, RSS, and trials |
 | README | short documented setup, real numbers, limitations, no placeholders |
 | Demo | 60 seconds, no code edits, no fake data |
 | Docs | decisions, architecture, spec, plan, product doc match the code |
@@ -164,29 +166,29 @@ it? Not "is this top-class." Existence plus defense.
 
 ---
 
-## 6. How we work together
+## 6. How we worked
 
-The old rule "AI never writes logic" is right in spirit but too blunt. A beginner
-should not debug CMake for days, and a beginner should not be handed the prune function
-either. The three-tier contract:
+The old rule "AI never writes logic" was retired for this build. The user asked for
+the implementation to be written by the agent, with the user reviewing the plan,
+the measured results, and the explanations at each phase. The working contract was:
 
-| Tier | Who writes | What |
+| Tier | Owner | What |
 |---|---|---|
-| **Plumbing** | Agent | CMake/presets, CI, CLI parsing, fvecs/JSON writers, React shell, plotting, build errors. You must be able to explain the data flow. |
-| **Algorithm** | You, with agent scaffolding | distance, vector store, brute force, HNSW insert/search/prune, mark-deleted, SQLite rebuild. Agent writes the spec, signatures, failing tests, and fixtures; you write the bodies; agent reviews and quizzes. |
-| **Ownership** | You | property tests (you state each property), `DECISIONS.md` entries, the 20-minute whiteboard, the 60-second demo. |
+| **Plumbing and implementation** | Agent | CMake, CI, engine, SQLite, providers, API, React UI, tests, benchmark harness. |
+| **Direction and review** | User | Scope, corrections, phase approval, demo expectations. |
+| **Ownership** | User | Explaining the data flow, the algorithm, the decisions, and the measured numbers without notes. |
 
-Before writing any function, say out loud what it does in one sentence. If you cannot,
-stop. The goal is not "typed every line"; it is "can defend every line."
+The agent wrote the code; the user still owns the defense. That is why every phase
+was explained and why `DECISIONS.md` records the why, not only the what.
 
-**Build order.** Dependency-driven, not date-driven:
+**Build order used.** Dependency-driven, not date-driven:
 
 1. trusted data and the brute-force ruler;
 2. the engine on small fixtures;
-3. the product flow with a fake Ollama;
-4. the real Ollama integration;
+3. the product flow with offline providers;
+4. optional real provider integration;
 5. the SIFT benchmark and `bench.json`;
-6. the Benchmark tab and deploy/demo polish.
+6. the product UI, map, and release polish.
 
 **Stuck for 45 minutes?** Stop typing. Say what you expected, what happened, and the
 exact error. Do not grind. **Never continue past a failed gate.**
@@ -209,13 +211,13 @@ exact error. Do not grind. **Never continue past a failed gate.**
 | Filtering deleted nodes out of traversal | Graph disconnects; live nodes disappear | Traverse tombstones, filter only results |
 | Delete-all then insert | New node has no live candidates; queries miss it | Insert beam includes tombstones; query filters them |
 | SQLite and graph drift | Wrong citations or missing results | SQLite source of truth; rebuild on startup (D9) |
-| Fake embeddings | Map looks nice; search is nonsense | Real Ollama embeddings only |
+| Disposable embeddings | Map looks nice; search is nonsense | A real provider whose vectors are stored and reused; offline hash is deterministic, not fake |
 | KD-tree at 128/768D | Slow, complex, no benefit | No KD-tree; one HNSW path (D14) |
-| 3D map / static site | Days of polish, no new proof | 2D map; product UI is the showcase (D12, D14) |
+| Unmeasured 3D polish | Days of work, no new proof | 3D shipped only after 2D and retrieval were measured; product UI is the showcase |
 | 1M too early | 512 MB, long builds, invalid GT | 100k first; 1M is one config after v1 |
 | Live benchmark in API | Network noise; second source of truth | CLI benchmark; UI reads `bench.json` (D11) |
 | "Production-grade" claim | README says more than the code does | Say what is true: portfolio-grade v1 |
-| Only happy-path tests | Demo fails on Ollama down, bad file, restart | Error paths and restart test |
+| Only happy-path tests | Demo fails on a provider outage, bad file, restart | Error paths and restart test |
 
 ---
 
@@ -240,20 +242,20 @@ exact error. Do not grind. **Never continue past a failed gate.**
 | p50 / p95 / p99 | median / slow-tail latency |
 | fvecs | binary vector file: 4-byte dim, then dim floats, per record |
 | ivecs | same, but 4-byte integers (answer key) |
-| embedding | the vector Ollama returns for a chunk or question |
+| embedding | the vector an embedding provider returns for a chunk or question |
 | chunk | a piece of a document, small enough to retrieve |
 | RAG | retrieval-augmented generation: retrieve chunks, then answer |
 | citation | the chunk ID/title shown as the source of an answer |
 | SQLite | the file database that stores documents and embeddings |
 | Ollama | the local model server for embeddings and generation |
-| PCA | projection of high-dimensional vectors to 2D for the map |
+| PCA | projection of high-dimensional vectors to 2D or 3D for the map |
 
 ---
 
 ## 9. Read order
 
 1. **This file** — what and why.
-2. **`DECISIONS.md`** — the lock. Read D1–D20 before arguing about anything.
+2. **`DECISIONS.md`** — the lock. Read D1–D29 before arguing about anything.
 3. **`ARCHITECTURE.md`** — components, data model, API, memory, tests.
 4. **`HNSW-SPEC.md`** — read §1–§6 before writing the graph; §7–§8 before the prune
    and delete. Not day one.

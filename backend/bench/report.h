@@ -8,7 +8,7 @@
 
 #include "engine/metrics.h"
 
-namespace vf {
+namespace hnswhy {
 
 struct DatasetReport {
     std::string name;
@@ -65,4 +65,4 @@ double peak_rss_mb();
 
 void write_bench_json(const std::filesystem::path& output, const BenchReport& report);
 
-}  // namespace vf
+}  // namespace hnswhy

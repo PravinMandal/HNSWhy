@@ -16,26 +16,26 @@
 // Real-data gate for the graph: build siftsmall, then score against the shipped
 // exact answer key. Ground truth stores IDs only, so the cutoff distance comes
 // from the base vectors.
-VF_TEST(siftsmall_hnsw_recall_and_invariants) {
-    const char* dir = std::getenv("VF_SIFTSMALL_DIR");
+HNSWHY_TEST(siftsmall_hnsw_recall_and_invariants) {
+    const char* dir = std::getenv("HNSWHY_SIFTSMALL_DIR");
     if (dir == nullptr || *dir == '\0') {
-        std::cout << "  [skip] VF_SIFTSMALL_DIR is not set\n";
+        std::cout << "  [skip] HNSWHY_SIFTSMALL_DIR is not set\n";
         return;
     }
 
     const std::filesystem::path root(dir);
-    const vf::VectorStore base = vf::load_fvecs_store(root / "siftsmall_base.fvecs");
-    const vf::FloatMatrix queries = vf::load_fvecs(root / "siftsmall_query.fvecs");
-    const vf::IntMatrix truth = vf::load_ivecs(root / "siftsmall_groundtruth.ivecs");
+    const hnswhy::VectorStore base = hnswhy::load_fvecs_store(root / "siftsmall_base.fvecs");
+    const hnswhy::FloatMatrix queries = hnswhy::load_fvecs(root / "siftsmall_query.fvecs");
+    const hnswhy::IntMatrix truth = hnswhy::load_ivecs(root / "siftsmall_groundtruth.ivecs");
 
-    vf::HNSWParams params;
+    hnswhy::HNSWParams params;
     params.M = 16;
     params.M0 = 32;
     params.efConstruction = 200;
     params.seed = 42;
 
     const auto build_start = std::chrono::steady_clock::now();
-    vf::HNSW hnsw(base, params);
+    hnswhy::HNSW hnsw(base, params);
     hnsw.build();
     const auto build_end = std::chrono::steady_clock::now();
     hnsw.validate();
@@ -56,25 +56,25 @@ VF_TEST(siftsmall_hnsw_recall_and_invariants) {
             CHECK(truth_id >= 0);
             CHECK(static_cast<std::size_t>(truth_id) < base.size());
             truth_distances.push_back(
-                vf::squared_l2(query, base.get(static_cast<vf::Slot>(truth_id))));
+                hnswhy::squared_l2(query, base.get(static_cast<hnswhy::Slot>(truth_id))));
         }
 
         const auto query_start = std::chrono::steady_clock::now();
-        const vf::SearchResult result = hnsw.search(query, 10, 50);
+        const hnswhy::SearchResult result = hnsw.search(query, 10, 50);
         const auto query_end = std::chrono::steady_clock::now();
         latencies_ms.push_back(
             std::chrono::duration<double, std::milli>(query_end - query_start).count());
 
         CHECK_EQ(result.ids.size(), std::size_t{10});
-        recall1_sum += vf::tie_aware_recall_at_k(result.distances, truth_distances, 1);
-        recall10_sum += vf::tie_aware_recall_at_k(result.distances, truth_distances, 10);
+        recall1_sum += hnswhy::tie_aware_recall_at_k(result.distances, truth_distances, 1);
+        recall10_sum += hnswhy::tie_aware_recall_at_k(result.distances, truth_distances, 10);
     }
 
     const double recall1 = recall1_sum / static_cast<double>(queries.n);
     const double recall10 = recall10_sum / static_cast<double>(queries.n);
     const double build_ms =
         std::chrono::duration<double, std::milli>(build_end - build_start).count();
-    const vf::LatencySummary latency = vf::summarize_latency(latencies_ms);
+    const hnswhy::LatencySummary latency = hnswhy::summarize_latency(latencies_ms);
 
     std::cout << "  siftsmall hnsw: build " << build_ms << " ms, R@1 " << recall1 << ", R@10 "
               << recall10 << ", p50 " << latency.p50 << " ms, p95 " << latency.p95 << " ms\n";

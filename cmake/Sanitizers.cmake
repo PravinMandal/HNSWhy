@@ -1,6 +1,6 @@
-option(VF_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(HNSWHY_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
-if(VF_SANITIZE)
+if(HNSWHY_SANITIZE)
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address,undefined)
 endif()

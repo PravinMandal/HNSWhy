@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace vf {
+namespace hnswhy {
 namespace {
 
 static_assert(std::endian::native == std::endian::little,
@@ -173,4 +173,4 @@ void write_ivecs(const std::filesystem::path& path, std::span<const std::int32_t
     write_matrix(path, data, n, dim);
 }
 
-}  // namespace vf
+}  // namespace hnswhy

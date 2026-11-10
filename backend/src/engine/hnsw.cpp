@@ -10,7 +10,7 @@
 
 #include "engine/distance.h"
 
-namespace vf {
+namespace hnswhy {
 namespace {
 
 struct FartherFirst {
@@ -71,6 +71,7 @@ void HNSW::ensureCapacity(Slot id) {
                                link_capacity_ * 2});
     links0_.resize(new_capacity * params_.M0, kInvalidSlot);
     degree0_.resize(new_capacity, 0);
+    in_degree0_.resize(new_capacity, 0);
     visit_tag_.resize(new_capacity, 0);
     link_capacity_ = new_capacity;
 }
@@ -86,6 +87,9 @@ void HNSW::ensureNode(Slot id, int level) {
     ensureCapacity(id);
     level_.resize(static_cast<std::size_t>(id) + 1);
     deleted_.resize(static_cast<std::size_t>(id) + 1);
+    if (level_count_.size() < static_cast<std::size_t>(level) + 1) {
+        level_count_.resize(static_cast<std::size_t>(level) + 1, 0);
+    }
     if (upper_.size() <= id) {
         upper_.resize(static_cast<std::size_t>(id) + 1);
     }
@@ -127,6 +131,7 @@ void HNSW::addNeighbour(Slot id, int layer, Slot neighbour) {
         const std::size_t base = static_cast<std::size_t>(id) * params_.M0;
         links0_[base + degree0_[id]] = neighbour;
         ++degree0_[id];
+        ++in_degree0_[neighbour];
     } else {
         auto& list = upper_[id][static_cast<std::size_t>(layer - 1)];
         if (list.size() >= params_.M) {
@@ -138,9 +143,21 @@ void HNSW::addNeighbour(Slot id, int layer, Slot neighbour) {
 
 void HNSW::setNeighbours(Slot id, int layer, std::span<const Slot> list) {
     if (layer == 0) {
+        const std::span<const Slot> current = neighbours(id, 0);
+        const std::vector<Slot> previous(current.begin(), current.end());
+        for (const Slot old : previous) {
+            if (std::find(list.begin(), list.end(), old) == list.end()) {
+                noteEdgeRemoved(old);
+            }
+        }
         const std::size_t base = static_cast<std::size_t>(id) * params_.M0;
         std::copy(list.begin(), list.end(), links0_.begin() + static_cast<std::ptrdiff_t>(base));
         degree0_[id] = static_cast<std::uint16_t>(list.size());
+        for (const Slot neighbour : list) {
+            if (std::find(previous.begin(), previous.end(), neighbour) == previous.end()) {
+                ++in_degree0_[neighbour];
+            }
+        }
     } else {
         auto& target = upper_[id][static_cast<std::size_t>(layer - 1)];
         target.assign(list.begin(), list.end());
@@ -293,17 +310,71 @@ std::vector<Slot> HNSW::selectNeighbours(Slot ref, std::span<const Candidate> ca
 }
 
 void HNSW::connect(Slot id, std::span<const Slot> selected, int layer) {
+    bool kept_back_edge = false;
     for (const Slot neighbour : selected) {
         addNeighbour(id, layer, neighbour);
 
-        // Make room before the back-edge: layer 0 uses a fixed-width row, so a
-        // write at capacity would spill into the next node's row. The target is
-        // cap - 1 because the new edge is added right after.
-        if (degree(neighbour, layer) >= cap(layer)) {
-            prune(neighbour, layer, cap(layer) - 1);
+        if (degree(neighbour, layer) < cap(layer)) {
+            addNeighbour(neighbour, layer, id);
+            kept_back_edge = true;
+            continue;
         }
-        addNeighbour(neighbour, layer, id);
+
+        // The neighbour is full. Add the new edge to the candidate pool and
+        // prune the whole pool, so the new node competes with the old edges
+        // instead of being appended after an unconditional eviction.
+        std::vector<Candidate> pool;
+        pool.reserve(degree(neighbour, layer) + 1);
+        for (const Slot other : neighbours(neighbour, layer)) {
+            pool.push_back(Candidate{distanceBetween(neighbour, other), other});
+        }
+        pool.push_back(Candidate{distanceBetween(neighbour, id), id});
+        const std::vector<Slot> kept = selectNeighbours(neighbour, pool, cap(layer));
+        kept_back_edge = kept_back_edge ||
+                         std::find(kept.begin(), kept.end(), id) != kept.end();
+        setNeighbours(neighbour, layer, kept);
     }
+
+    if (layer == 0 && !kept_back_edge) {
+        // The new node became a one-way leaf: every selected neighbour rejected
+        // the back-edge. That is expected for exactly equidistant vectors, but
+        // it disconnects the new node from the entry component.
+        layer0_connected_ = false;
+    }
+}
+
+void HNSW::noteEdgeRemoved(Slot target) {
+    if (in_degree0_[target] == 0) {
+        return;
+    }
+    --in_degree0_[target];
+    if (in_degree0_[target] == 0 && target != entry_) {
+        layer0_connected_ = false;
+    }
+}
+
+void HNSW::recomputeConnectivity() {
+    if (slot_count_ == 0) {
+        layer0_connected_ = true;
+        return;
+    }
+    std::vector<std::uint8_t> seen(slot_count_, 0);
+    std::vector<Slot> stack;
+    stack.push_back(entry_);
+    seen[entry_] = 1;
+    std::size_t reached = 0;
+    while (!stack.empty()) {
+        const Slot current = stack.back();
+        stack.pop_back();
+        ++reached;
+        for (const Slot neighbour : neighbours(current, 0)) {
+            if (!seen[neighbour]) {
+                seen[neighbour] = 1;
+                stack.push_back(neighbour);
+            }
+        }
+    }
+    layer0_connected_ = reached == slot_count_;
 }
 
 void HNSW::prune(Slot id, int layer, std::size_t limit) {
@@ -335,6 +406,9 @@ void HNSW::insert(Slot id) {
         top_level_ = level;
         slot_count_ = 1;
         ++live_count_;
+        for (int layer = 0; layer <= level; ++layer) {
+            ++level_count_[static_cast<std::size_t>(layer)];
+        }
         return;
     }
 
@@ -362,6 +436,9 @@ void HNSW::insert(Slot id) {
 
     ++slot_count_;
     ++live_count_;
+    for (int layer = 0; layer <= level; ++layer) {
+        ++level_count_[static_cast<std::size_t>(layer)];
+    }
     if (level > top_level_) {
         entry_ = id;
         top_level_ = level;
@@ -375,6 +452,7 @@ void HNSW::build() {
     for (Slot id = 0; id < store_.size(); ++id) {
         insert(id);
     }
+    recomputeConnectivity();
 }
 
 void HNSW::remove(Slot id) {
@@ -395,17 +473,42 @@ bool HNSW::isDeleted(Slot id) const {
 }
 
 SearchResult HNSW::search(std::span<const float> query, std::size_t k, std::size_t ef) {
-    if (query.size() != store_.dim()) {
-        throw std::invalid_argument("HNSW::search: query dimension mismatch");
-    }
-
     SearchResult result;
     if (k == 0 || slot_count_ == 0) {
         return result;
     }
+    if (query.size() != store_.dim()) {
+        throw std::invalid_argument("HNSW::search: query dimension mismatch");
+    }
 
     const std::uint64_t distances_before = distance_computations_;
     const std::uint64_t hops_before = hops_;
+
+    // A disconnected layer 0 cannot be trusted for top-k: a graph component
+    // reachable from the entry point may not contain the query's true nearest
+    // neighbours. Fall back to an exact scan for those degenerate graphs so
+    // results stay exact and prefix-consistent across k.
+    if (!layer0_connected_) {
+        std::vector<Candidate> all;
+        all.reserve(live_count_);
+        for (Slot id = 0; id < slot_count_; ++id) {
+            if (deleted_[id] == 0) {
+                all.push_back(Candidate{distanceTo(query, id), id});
+            }
+        }
+        std::sort(all.begin(), all.end(),
+                  [](const Candidate& a, const Candidate& b) { return closer(a, b); });
+        const std::size_t take = std::min(k, all.size());
+        result.ids.reserve(take);
+        result.distances.reserve(take);
+        for (std::size_t i = 0; i < take; ++i) {
+            result.ids.push_back(all[i].id);
+            result.distances.push_back(all[i].dist);
+        }
+        result.stats.distance_computations = distance_computations_ - distances_before;
+        result.stats.hops = static_cast<std::uint32_t>(hops_ - hops_before);
+        return result;
+    }
 
     Slot entry = entry_;
     for (int layer = top_level_; layer > 0; --layer) {
@@ -415,9 +518,30 @@ SearchResult HNSW::search(std::span<const float> query, std::size_t k, std::size
 
     const std::size_t ef_effective = std::min(std::max(ef, k), slot_count_);
     const std::array<Slot, 1> entry_array{entry};
-    const std::vector<Candidate> candidates =
+    std::vector<Candidate> candidates =
         searchLayer(query, entry_array, ef_effective, 0, true);
     ++result.stats.layer_visits;
+
+    // Tie-heavy graphs (duplicates, one-hot vectors) can be disconnected: a
+    // node inserted after the layer-0 degree cap may have no incoming edge.
+    // Completing a short result from the store keeps the public contract
+    // (min(k, live) results) without turning normal searches into a scan.
+    const std::size_t target = std::min(k, live_count_);
+    if (candidates.size() < target) {
+        std::vector<std::uint8_t> seen(slot_count_, 0);
+        for (const Candidate& candidate : candidates) {
+            seen[candidate.id] = 1;
+        }
+        candidates.reserve(target);
+        for (Slot id = 0; id < slot_count_; ++id) {
+            if (deleted_[id] != 0 || seen[id] != 0) {
+                continue;
+            }
+            candidates.push_back(Candidate{distanceTo(query, id), id});
+        }
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const Candidate& a, const Candidate& b) { return closer(a, b); });
+    }
 
     const std::size_t take = std::min(k, candidates.size());
     result.ids.reserve(take);
@@ -430,6 +554,32 @@ SearchResult HNSW::search(std::span<const float> query, std::size_t k, std::size
     result.stats.distance_computations = distance_computations_ - distances_before;
     result.stats.hops = static_cast<std::uint32_t>(hops_ - hops_before);
     return result;
+}
+
+std::size_t HNSW::reachableCount(int layer) const {
+    if (slot_count_ == 0 || layer < 0 || layer > top_level_) {
+        return 0;
+    }
+    std::vector<std::uint8_t> seen(slot_count_, 0);
+    std::vector<Slot> stack;
+    stack.push_back(entry_);
+    seen[entry_] = 1;
+    std::size_t reached = 0;
+    while (!stack.empty()) {
+        const Slot current = stack.back();
+        stack.pop_back();
+        if (level_[current] < layer) {
+            continue;
+        }
+        ++reached;
+        for (const Slot neighbour : neighbours(current, layer)) {
+            if (!seen[neighbour]) {
+                seen[neighbour] = 1;
+                stack.push_back(neighbour);
+            }
+        }
+    }
+    return reached;
 }
 
 void HNSW::validate() const {
@@ -448,12 +598,17 @@ void HNSW::validate() const {
     }
 
     std::size_t live = 0;
+    std::vector<std::uint32_t> expected_level_count(static_cast<std::size_t>(top_level_) + 1, 0);
+    std::vector<std::uint32_t> expected_in_degree(slot_count_, 0);
     for (Slot id = 0; id < slot_count_; ++id) {
         if (level_[id] > top_level_) {
             throw std::runtime_error("HNSW::validate: node level above top level");
         }
         if (!deleted_[id]) {
             ++live;
+        }
+        for (int layer = 0; layer <= level_[id]; ++layer) {
+            ++expected_level_count[static_cast<std::size_t>(layer)];
         }
         if (degree0_[id] > params_.M0) {
             throw std::runtime_error("HNSW::validate: layer 0 degree above M0");
@@ -473,6 +628,7 @@ void HNSW::validate() const {
                                          std::to_string(neighbour) + " (degree " +
                                          std::to_string(degree0_[id]) + ")");
             }
+            ++expected_in_degree[neighbour];
         }
 
         for (int layer = 1; layer <= level_[id]; ++layer) {
@@ -494,9 +650,24 @@ void HNSW::validate() const {
         }
     }
 
+    if (level_count_.size() != expected_level_count.size()) {
+        throw std::runtime_error("HNSW::validate: level count vector size mismatch");
+    }
+    for (std::size_t layer = 0; layer < level_count_.size(); ++layer) {
+        if (level_count_[layer] != expected_level_count[layer]) {
+            throw std::runtime_error("HNSW::validate: level count mismatch at layer " +
+                                     std::to_string(layer));
+        }
+    }
+    for (Slot id = 0; id < slot_count_; ++id) {
+        if (in_degree0_[id] != expected_in_degree[id]) {
+            throw std::runtime_error("HNSW::validate: layer 0 in-degree mismatch at slot " +
+                                     std::to_string(id));
+        }
+    }
     if (live != live_count_) {
         throw std::runtime_error("HNSW::validate: live count mismatch");
     }
 }
 
-}  // namespace vf
+}  // namespace hnswhy

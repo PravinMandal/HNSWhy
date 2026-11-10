@@ -8,7 +8,7 @@
 #include "bench/fvecs.h"
 #include "engine/vector_store.h"
 
-namespace vf {
+namespace hnswhy {
 
 // Exact top-k answer key: IDs and distances, row-major, n * k.
 struct GroundTruth {
@@ -24,4 +24,4 @@ using ProgressFn = std::function<void(std::size_t done, std::size_t total)>;
 GroundTruth compute_ground_truth(const VectorStore& base, const FloatMatrix& queries,
                                  std::size_t k, const ProgressFn& progress = {});
 
-}  // namespace vf
+}  // namespace hnswhy

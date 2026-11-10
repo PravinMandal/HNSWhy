@@ -1,4 +1,4 @@
-# VectorForge — Product & Showcase
+# HNSWhy — Product & Showcase
 
 > The product UI is the showcase. The old three-page static site is retired.
 >
@@ -61,7 +61,7 @@ footer.
 ### Layout
 
 - Header: "Documents" + a primary "Add document" button.
-- Upload area: drag-and-drop `.txt`/`.md` or paste text; title field; "Index" button.
+- Upload area: drag-and-drop `.pdf`/`.txt`/`.md` or paste text; title field; "Index" button.
 - Status line: one "Indexing…" state while the request runs; on success show the chunk
   count returned by the API. On failure, the error message names the stage that failed
   (validation, embedding, or database). Do not fake a multi-stage progress bar.
@@ -71,9 +71,9 @@ footer.
 
 ### Behavior
 
-- Upload accepts `.txt` and `.md` only in v1. PDF is deferred; do not pretend to
-  support it.
-- Text limit: 2 MB per upload.
+- Upload accepts `.pdf`, `.txt`, and `.md`, plus pasted text. PDFs are extracted with
+  `pdftotext`.
+- Text limit: 4 MB per upload.
 - On submit: POST `/api/documents`; show progress; on success, refresh the list.
 - Show the chunk count returned by the API; do not estimate it from a word count in the
   browser. Chunk size is a backend constant.
@@ -142,29 +142,29 @@ footer.
 
 ### Layout
 
-- 2D scatter plot of sampled chunks; points colored by document (or one accent color
-  if there are too many documents).
+- 2D SVG and 3D canvas projections of sampled chunks; points colored by document.
 - Query marker and retrieved-hit markers, with labels.
 - Legend: point = chunk, ring = query, filled = retrieved.
-- Caption: "2D PCA projection of real embeddings; distances are approximate. Sample:
+- Caption: "PCA projection of real embeddings; distances are approximate. Sample:
   N of M chunks."
-- Optional document filter; optional "show only hits" toggle.
+- Document focus, point inspector, query overlay toggle, pan/zoom/orbit controls.
 
 ### Behavior
 
-- GET `/api/map?limit=1000` returns sampled chunk vectors + metadata.
-- Frontend computes 2D PCA in `lib/pca.js`; no server-side projection in v1.
-- If the corpus is small, show all points; if large, sample deterministically (stable
-  seed) so the map does not jump between reloads.
+- GET `/api/map?limit=1200` returns sampled chunk vectors + metadata (server max
+  2,000, default 800).
+- Frontend computes a three-component PCA in `lib/pca.ts`; no server-side projection.
+- If the corpus is small, show all points; if large, sample from the store.
 - Highlight the query and the current Ask tab's retrieved chunks if available.
 - If there are no documents, show an empty state; do not draw a fake cloud.
 - The map is not a benchmark. Do not label clusters as "good" or "bad" retrieval.
 
-### Why 2D and not 3D
+### Why 2D and 3D
 
-3D adds occlusion, camera controls, and a dependency for a screenshot that is not more
-truthful. A 2D projection already shows the only thing the product needs: the points
-come from real embeddings, and the query lands near its retrieved chunks.
+2D is the fast default: it is readable, printable, and works on a phone. 3D adds
+depth cues and orbit controls for inspection when clusters overlap in the first two
+components. Both are projections of the same real vectors; neither is the HNSW graph
+and neither is ground truth.
 
 ---
 
@@ -175,19 +175,19 @@ benchmark runner.
 
 ### Layout
 
-- Header: dataset, `N`, `dim`, `k`, query count, build/query parameters.
-- Hero row: `R@10`, QPS, p95, build time, RSS, speedup.
-- Recall–QPS curve: one point per measured `efSearch` value from the same build; hover
-  shows `efSearch` and metrics; run metadata is in the header. The pre-registered SLO
-  point is marked.
-- Table: all measured points, including dominated ones; no interpolation.
-- Command block: the exact `hns_bench` command.
-- Metadata: commit, dirty flag, CPU, RAM, compiler, flags, thread count, dataset
-  hashes.
-- "Why diversity?" panel: the two-cluster prune explanation, with a link to
-  `HNSW-SPEC.md` §7.1–§7.2. This replaces the old `/prune` page.
-- Ablation: not in v1. The two-cluster test is the v1 evidence for the heuristic; an
-  optional nearest-only build is a later experiment, not a panel in this tab.
+- Header: dataset, `N`, `dim`, query count, generated time, download and reload.
+- Hero row: `R@10`, `R@1`, QPS, p50, p95, build time, RSS, and the speedup against
+  the exact scan for the selected `efSearch`.
+- Recall vs. `efSearch` curve: one point per measured value from the same build;
+  clicking a point changes the highlighted `efSearch` across the page. No
+  interpolation and no invented points.
+- Table: all measured points, including dominated ones and the exact baseline.
+- Config card: `M`, `M0`, `efConstruction`, distance, seed, `k`, passes, warmup.
+- Environment card: dataset path, compiler, CPU, thread count, build type, AVX2 use,
+  engine name and version.
+- Footnote: the page renders the stored `bench.json`; it does not measure in the
+  browser.
+- No report: an empty state with the command that produces one.
 
 ### Behavior
 
@@ -195,10 +195,9 @@ benchmark runner.
   and returns it.
 - If no report exists: show "No benchmark report. Run `scripts/run_bench.sh` to
   produce one." Do not invent a chart.
-- If the report is from a different commit than the running server, show a warning.
 - The tab never runs a 100k build in the request.
-- The UI may format numbers, but it must not recompute recall or speedup from raw
-  query data; those come from the report.
+- The UI may format numbers and derive a ratio such as speedup from values in the
+  report, but it must never recompute recall from raw query data.
 
 ### What not to show
 
@@ -245,11 +244,14 @@ The UI should map error codes to actionable states, not dump a raw stack trace.
 
 ### Stack
 
-- Existing VectorForge React/Vite app, refactored to the four tabs in this document
-  (see `ARCHITECTURE.md` §3.1).
-- `api.js` for all HTTP calls and error normalization.
-- `lib/pca.js` for 2D PCA.
-- SVG for the benchmark curve; Canvas or SVG for the map (a few thousand points).
+- React 19 + TypeScript + Vite, built from scratch for this repository.
+- Hash routing (`#/documents`, `#/ask`, `#/map`, `#/benchmark`) with no server-side
+  router.
+- `src/api/client.ts` for all HTTP calls, upload progress, and error normalization.
+- `src/lib/pca.ts` for NIPALS PCA, run in a Web Worker with a synchronous fallback.
+- SVG for the benchmark curve and the 2D map; Canvas for the 3D map.
+- Split CSS: design tokens, base, layout, UI primitives, and one file per feature.
+- Vitest for the projection and formatting tests.
 - No Next.js, no server-side rendering, no charting SaaS.
 - No fake embedding function. The old `textToEmbedding` with `Math.random()` jitter is
   deleted, not hidden behind a flag.
@@ -258,20 +260,22 @@ The UI should map error codes to actionable states, not dump a raw stack trace.
 
 **Technical report, not SaaS landing page.**
 
-- Near-black background, off-white text, one amber accent for retrieval, cyan for
-  sources/hits, red for misses.
-- Monospace for numbers; sans for prose.
-- No hero image, gradients, glassmorphism, or stock illustrations.
+- Warm paper and ink in light mode; warm charcoal in dark mode. Burnt sienna is the
+  single accent; teal marks recall@10, amber marks the query overlay.
+- Fraunces for display headings, Inter for UI text, JetBrains Mono for numbers.
+- Hairline rules and restrained surfaces instead of gradients, glassmorphism, or
+  stock illustrations.
 - Every benchmark number has a caption with `run_id` or "not measured."
-- Motion 150–250 ms; respect `prefers-reduced-motion`.
-- Color is not the only carrier of meaning; use labels and shapes.
+- Motion 120–220 ms; respect `prefers-reduced-motion`.
+- Colour is not the only carrier of meaning; use labels, shapes, and text.
 - The Documents/Ask flow works on a 390 px phone. The map can say "best on desktop."
+- Focus traps, a skip link, `inert` background content, and visible focus rings.
 
 ### Performance
 
 - The app shell should load fast; the benchmark JSON is small.
-- The map payload is capped at 2,000 points; default 1,000. If it is slow, reduce the
-  default, not the truth.
+- The map payload is capped at 1,200 points. If it is slow, reduce the default, not
+  the truth.
 - No analytics, cookies, API keys in the frontend, or hidden network calls.
 
 ---
@@ -281,15 +285,15 @@ The UI should map error codes to actionable states, not dump a raw stack trace.
 Fill every placeholder from the real `bench.json`; never say a number that is not in
 the artifact.
 
-1. **0–10 s — product.** "This is VectorForge. I upload a document, it gets chunked and
+1. **0–10 s — product.** "This is HNSWhy. I upload a document, it gets chunked and
    embedded locally, and the vectors go into an HNSW index I wrote from scratch in
    C++."
 2. **10–25 s — ask.** Upload a short doc; ask a question that is answerable only from
    it. Show the answer and click a citation. "The answer is grounded in these chunks.
    If the index finds nothing, it says so instead of inventing an answer."
-3. **25–35 s — map.** "These are the real embeddings, projected to 2D with PCA. The
-   query and its retrieved chunks are highlighted. This is a visualization, not a
-   benchmark."
+3. **25–35 s — map.** "These are the real embeddings, projected with PCA. The query
+   and its retrieved chunks are highlighted; I can switch to 3D and inspect a point.
+   This is a visualization, not a benchmark."
 4. **35–50 s — benchmark.** "The same engine is measured on 100,000 SIFT vectors:
    R@10 R% at Q QPS, p95 P ms, B seconds to build, M MB RSS. Exact search does E QPS.
    Every point is a real run; the command and commit are here."
@@ -303,7 +307,7 @@ draw the two-cluster example. Do not open a separate static site; there isn't on
 **Resume bullet template:**
 
 > Built a RAG app backed by a from-scratch C++20 HNSW engine: document upload,
-> SQLite persistence, Ollama embeddings, cited answers, and a 2D embedding map.
+> SQLite persistence, configurable embeddings, cited answers, and a 2D/3D embedding map.
 > Benchmarked the same engine against exact search on 100k SIFT: R@10 0.9X, X QPS vs
 > Y exact (Z×), p95 W ms, B s build, M MB RSS. Demo: `<url>`.
 
@@ -321,7 +325,8 @@ Three numbers maximum; CPU/RAM and the full table are in the README.
   commands.
 - A 60-second demo works without editing code or faking data.
 - No fake embeddings, no hardcoded speedup, no "production-grade" claim.
-- The app is usable on a phone for Documents/Ask; the map can be desktop-first.
+- The app is usable on a phone for all four sections; the map remains interactive at
+  narrow widths.
 
 A public deployment is a stretch in v1. A local documented demo plus a recording is
 enough to show the product; a public URL is better if it can run Ollama reliably.
@@ -333,7 +338,6 @@ enough to show the product; a public URL is better if it can run Ollama reliably
 | Not this | Because |
 |---|---|
 | A static three-page showcase | the product is the showcase (D12) |
-| A 3D map | cosmetic; 2D shows the same truth (D14) |
 | A KD-tree tab | high-dimensional decoration; one engine path (D14) |
 | A live 100k benchmark in the API | noisy and slow; CLI report only (D11) |
 | A trace-replay page | not needed for the product story; optional later |
@@ -351,7 +355,7 @@ enough to show the product; a public URL is better if it can run Ollama reliably
 | Ollama is slow/unavailable during the demo | health check; clear 503; pre-warm; record a backup demo |
 | The map looks like a random cloud | label it as PCA; show sample size; highlight hits |
 | The answer cites nothing | show a warning; do not present it as grounded |
-| Benchmark JSON is from an old commit | show commit/dirty; warn on mismatch |
+| Benchmark JSON is stale relative to the code | the report carries config, compiler, hardware, and dataset fields; rerun `scripts/run_bench.sh` after engine changes |
 | Frontend scope creep | four tabs; D20 cut list; no static site |
 | Fake data sneaks back in | delete `textToEmbedding`; code review; tests with a fake Ollama only |
 | The product hides a weak engine | benchmark tab shows real numbers and limitations |

@@ -4,7 +4,7 @@
 
 #include "engine/brute_force.h"
 
-namespace vf {
+namespace hnswhy {
 
 GroundTruth compute_ground_truth(const VectorStore& base, const FloatMatrix& queries,
                                  std::size_t k, const ProgressFn& progress) {
@@ -35,4 +35,4 @@ GroundTruth compute_ground_truth(const VectorStore& base, const FloatMatrix& que
     return truth;
 }
 
-}  // namespace vf
+}  // namespace hnswhy

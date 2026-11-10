@@ -13,7 +13,7 @@
 
 #include "json.hpp"
 
-namespace vf {
+namespace hnswhy {
 namespace {
 
 using json = nlohmann::json;
@@ -119,7 +119,7 @@ void write_bench_json(const std::filesystem::path& output, const BenchReport& re
     json root{
         {"schema_version", 1},
         {"generated_at_utc", now_utc()},
-        {"engine", {{"name", "VectorForge / HNSWhy"}, {"version", "0.1.0"}}},
+        {"engine", {{"name", "HNSWhy"}, {"version", "0.1.0"}}},
         {"dataset",
          {{"name", report.dataset.name},
           {"base_file", report.dataset.base_file},
@@ -179,4 +179,4 @@ void write_bench_json(const std::filesystem::path& output, const BenchReport& re
     out << root.dump(2) << '\n';
 }
 
-}  // namespace vf
+}  // namespace hnswhy

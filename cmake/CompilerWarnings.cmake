@@ -1,1 +1,1 @@
-set(VF_WARNINGS -Wall -Wextra -Wpedantic)
+set(HNSWHY_WARNINGS -Wall -Wextra -Wpedantic)

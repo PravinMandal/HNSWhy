@@ -5,7 +5,7 @@
 #include <limits>
 #include <span>
 
-namespace vf {
+namespace hnswhy {
 
 // Squared Euclidean distance. Non-finite inputs (NaN/Inf) and mismatched
 // dimensions produce +inf so callers treat them as "not a candidate".
@@ -22,4 +22,4 @@ inline float squared_l2(std::span<const float> a, std::span<const float> b) noex
     return std::isfinite(sum) ? sum : std::numeric_limits<float>::infinity();
 }
 
-}  // namespace vf
+}  // namespace hnswhy

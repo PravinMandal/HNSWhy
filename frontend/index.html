@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="HNSWhy is a retrieval-augmented knowledge engine powered by a from-scratch HNSW vector index."
+    />
+    <meta name="theme-color" content="#131210" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>HNSWhy — HNSW knowledge engine</title>
+    <script>
+      ;(() => {
+        const stored = localStorage.getItem('hnswhy-theme')
+        const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+        document.documentElement.dataset.theme =
+          stored === 'light' || stored === 'dark' ? stored : systemDark ? 'dark' : 'light'
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -212,7 +212,7 @@ I want to understand what you are building as you go, so explain the completed w
 
 ## Final expectation
 
-I want a complete, working and professionally presented VectorForge project.
+I want a complete, working and professionally presented HNSWhy project.
 
 The main priority is a correctly implemented, from-scratch HNSW vector search engine, supported by exact BruteForce search, proper benchmarking and a fully functional RAG application.
 
@@ -222,4 +222,4 @@ Most importantly, the entire codebase must be readable, clean, organized and mai
 
 Take ownership of the implementation. Research where necessary, make sensible engineering decisions, use critic subagents, test everything and keep me informed as each phase is completed.
 
-**Let's stop spending time discussing what we could build and start building VectorForge.**
+**Let's stop spending time discussing what we could build and start building HNSWhy.**

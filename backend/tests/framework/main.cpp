@@ -4,7 +4,7 @@
 #include <iostream>
 #include <string>
 
-namespace vftest {
+namespace hnswhytest {
 
 std::vector<Case>& registry() {
     static std::vector<Case> cases;
@@ -15,7 +15,7 @@ Registrar::Registrar(std::string name, std::function<void()> fn) {
     registry().push_back(Case{std::move(name), std::move(fn)});
 }
 
-}  // namespace vftest
+}  // namespace hnswhytest
 
 int main(int argc, char** argv) {
     std::string filter;
@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
 
     std::size_t run = 0;
     std::size_t failed = 0;
-    for (const auto& test : vftest::registry()) {
+    for (const auto& test : hnswhytest::registry()) {
         if (!filter.empty() && test.name.find(filter) == std::string::npos) {
             continue;
         }
@@ -47,5 +47,10 @@ int main(int argc, char** argv) {
 
     std::cout << "\n" << run - failed << "/" << run << " tests passed"
               << (filter.empty() ? "" : " (filter: " + filter + ")") << "\n";
+    if (run == 0) {
+        std::cerr << "no tests matched" << (filter.empty() ? "" : " filter '" + filter + "'")
+                  << "\n";
+        return 2;
+    }
     return failed == 0 ? 0 : 1;
 }

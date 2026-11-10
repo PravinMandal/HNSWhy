@@ -8,7 +8,7 @@
       "binaryDir": "${sourceDir}/build/dev",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "VF_SANITIZE": "ON"
+        "HNSWHY_SANITIZE": "ON"
       }
     },
     {

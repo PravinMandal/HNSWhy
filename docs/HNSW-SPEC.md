@@ -1,4 +1,4 @@
-# VectorForge / HNSWhy — HNSW Engine Specification
+# HNSWhy — HNSW Engine Specification
 
 > The hardest part of the project is not the benchmark; it is getting the graph
 > invariants and the product boundary right. This file is the contract for the engine
@@ -14,7 +14,7 @@
 
 The engine is an in-memory HNSW library used by two consumers:
 
-- the VectorForge server, for live document retrieval;
+- the HNSWhy server, for live document retrieval;
 - the `hns_bench` CLI, for the SIFT-100k measurement.
 
 v1 implements:

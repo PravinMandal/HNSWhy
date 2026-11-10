@@ -5,7 +5,7 @@
 
 #include "engine/distance.h"
 
-namespace vf {
+namespace hnswhy {
 namespace {
 
 // Ascending (distance, slot) order. Used as the comparator for a max-heap so
@@ -54,4 +54,4 @@ SearchResult BruteForce::search(std::span<const float> query, std::size_t k) con
     return result;
 }
 
-}  // namespace vf
+}  // namespace hnswhy

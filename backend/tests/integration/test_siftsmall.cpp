@@ -15,17 +15,17 @@
 // Independent gate: exact search over siftsmall must reproduce the shipped
 // answer key. The shipped file contains IDs only, so the true k-th distance is
 // recovered from those IDs and recall is scored tie-aware.
-VF_TEST(siftsmall_bruteforce_matches_shipped_groundtruth) {
-    const char* dir = std::getenv("VF_SIFTSMALL_DIR");
+HNSWHY_TEST(siftsmall_bruteforce_matches_shipped_groundtruth) {
+    const char* dir = std::getenv("HNSWHY_SIFTSMALL_DIR");
     if (dir == nullptr || *dir == '\0') {
-        std::cout << "  [skip] VF_SIFTSMALL_DIR is not set\n";
+        std::cout << "  [skip] HNSWHY_SIFTSMALL_DIR is not set\n";
         return;
     }
 
     const std::filesystem::path root(dir);
-    const vf::VectorStore base = vf::load_fvecs_store(root / "siftsmall_base.fvecs");
-    const vf::FloatMatrix queries = vf::load_fvecs(root / "siftsmall_query.fvecs");
-    const vf::IntMatrix truth = vf::load_ivecs(root / "siftsmall_groundtruth.ivecs");
+    const hnswhy::VectorStore base = hnswhy::load_fvecs_store(root / "siftsmall_base.fvecs");
+    const hnswhy::FloatMatrix queries = hnswhy::load_fvecs(root / "siftsmall_query.fvecs");
+    const hnswhy::IntMatrix truth = hnswhy::load_ivecs(root / "siftsmall_groundtruth.ivecs");
 
     CHECK_EQ(base.size(), std::size_t{10000});
     CHECK_EQ(base.dim(), std::size_t{128});
@@ -34,7 +34,7 @@ VF_TEST(siftsmall_bruteforce_matches_shipped_groundtruth) {
     CHECK_EQ(truth.n, std::size_t{100});
     CHECK_EQ(truth.dim, std::size_t{100});
 
-    const vf::BruteForce brute_force(base);
+    const hnswhy::BruteForce brute_force(base);
     const std::size_t k = truth.dim;
     std::size_t hits = 0;
     std::size_t total = 0;
@@ -43,7 +43,7 @@ VF_TEST(siftsmall_bruteforce_matches_shipped_groundtruth) {
 
     for (std::size_t q = 0; q < queries.n; ++q) {
         const std::span<const float> query = queries.row(q);
-        const vf::SearchResult result = brute_force.search(query, k);
+        const hnswhy::SearchResult result = brute_force.search(query, k);
         CHECK_EQ(result.ids.size(), k);
 
         const std::span<const std::int32_t> truth_ids = truth.row(q);
@@ -52,7 +52,7 @@ VF_TEST(siftsmall_bruteforce_matches_shipped_groundtruth) {
             CHECK(truth_id >= 0);
             CHECK(static_cast<std::size_t>(truth_id) < base.size());
             kth_truth = std::max(
-                kth_truth, vf::squared_l2(query, base.get(static_cast<vf::Slot>(truth_id))));
+                kth_truth, hnswhy::squared_l2(query, base.get(static_cast<hnswhy::Slot>(truth_id))));
         }
 
         const float tie_eps = 1e-5f * std::max(1.0f, kth_truth);
@@ -63,7 +63,7 @@ VF_TEST(siftsmall_bruteforce_matches_shipped_groundtruth) {
         }
         total += k;
 
-        for (const vf::Slot id : result.ids) {
+        for (const hnswhy::Slot id : result.ids) {
             if (std::find(truth_ids.begin(), truth_ids.end(), static_cast<std::int32_t>(id)) !=
                 truth_ids.end()) {
                 ++id_matches;

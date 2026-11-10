@@ -1,9 +1,10 @@
-# VectorForge / HNSWhy — Architecture
+# HNSWhy — Architecture
 
-> **Status: planning and merge.** No engine code exists in this repo yet. The
-> frontend source exists in the separate VectorForge project and will be imported as
-> `frontend/`. The decisions in `DECISIONS.md` are the lock; this file explains the
-> shape that follows from them.
+> **Status: v1 implemented.** Engine, product backend, frontend, tests, sample
+> knowledge base, and the frozen SIFT-100k benchmark report are in this repository.
+> The decisions in `DECISIONS.md` remain the lock; this file now describes the
+> shipped shape and notes where implementation details differ from the original
+> plan.
 >
 > **v1 in one line:** a RAG app a stranger can use, backed by a from-scratch C++ HNSW
 > engine, measured against exact search on SIFT-100k, with tests and a reproducible
@@ -13,12 +14,14 @@
 
 ## 0. Ten-second version
 
-A user uploads documents. The backend splits them into chunks, asks Ollama for an
-embedding per chunk, stores the text and vectors in SQLite, and inserts the vectors
-into a from-scratch HNSW index. When the user asks a question, the backend embeds the
-question, retrieves the nearest chunks with HNSW, and asks Ollama to answer using only
-those chunks. The answer comes back with citations. A separate CLI measures the same
-engine on SIFT-100k and writes `bench.json`; the UI's Benchmark tab reads that file.
+A user uploads documents. The backend extracts text, splits it into chunks, embeds
+each chunk with the configured provider, stores the text and vectors in SQLite, and
+inserts the vectors into a from-scratch HNSW index. The default provider is an offline
+deterministic hash embedder; Ollama and OpenAI-compatible endpoints are alternatives.
+When the user asks a question, the backend embeds the question, retrieves the nearest
+chunks with HNSW, and asks the configured chat provider to answer using only those
+chunks. The answer comes back with citations. A separate CLI measures the same engine
+on SIFT-100k and writes `bench.json`; the UI's Benchmark tab reads that file.
 
 The product is the demo. The engine is the depth. The benchmark is the evidence.
 
@@ -30,7 +33,7 @@ Three layers, three different jobs:
 
 | Layer | What it is | Why it exists |
 |---|---|---|
-| **Product** | React UI, HTTP API, SQLite, Ollama | A stranger can use it without reading code |
+| **Product** | React UI, HTTP API, SQLite, providers | A stranger can use it without reading code |
 | **Engine** | `VectorStore`, `BruteForce`, `HNSW`, metrics | The retrieval is actually implemented, not wrapped |
 | **Evidence** | `hns_bench` CLI + `bench.json` | The engine's quality is measured, not asserted |
 
@@ -72,10 +75,10 @@ the claim.
 │  engine/BruteForce exact answer key (tests and benchmark)           │
 └───────────────┬───────────────────────────────┬────────────────────┘
                 │                               │
-        ┌───────▼────────┐              ┌───────▼────────┐
-        │ SQLite file    │              │ Ollama server  │
-        │ source of truth│              │ embeddings+LLM │
-        └────────────────┘              └────────────────┘
+        ┌───────▼────────┐              ┌──────────────────────▼─────────┐
+        │ SQLite file    │              │ provider (optional network)    │
+        │ source of truth│              │ hash / Ollama / OpenAI-compat. │
+        └────────────────┘              └────────────────────────────────┘
 
 Separate process, same engine library:
 
@@ -97,35 +100,35 @@ Two important separations:
 
 ### 3.1 Frontend
 
-The existing VectorForge React/Vite app is the starting point, but the merge refactors
-it. The current app has a three-tab shell (Search, Documents, Ask AI) with an
-always-visible scatter plot; it talks to the old `/items` and `/doc/*` endpoints and
-computes fake 16D embeddings for the old Search and visualization paths. v1
-restructures it into the four tabs below, rewrites `api.js` for `/api/*`, and removes
-the fake-embedding path. The visual language and reusable components are kept; the old
-Search tab is not a v1 route.
+The frontend was built from scratch with React 19, TypeScript, and Vite. It has no
+dependency on the retired static showcase and no fake-embedding path. Hash routing
+keeps the four sections linkable without a server-side router.
 
 | File | Responsibility |
 |---|---|
-| `frontend/src/App.jsx` | shell, tabs, global state |
-| `frontend/src/api.js` | one place for HTTP calls and error handling |
-| `components/DocumentsTab.jsx` | upload/paste, document list, chunk count, delete |
-| `components/AskTab.jsx` | question, answer, citations, retrieved chunks, latency |
-| `components/MapTab.jsx` | 2D PCA of real embeddings; query and hits highlighted |
-| `components/BenchmarkTab.jsx` | table, curve, params, command, run metadata |
-| `components/common/` | buttons, empty states, errors, loading, badges |
-| `lib/pca.js` | small 2D PCA over the sampled embedding matrix |
+| `frontend/src/App.tsx` | mounts the application shell |
+| `frontend/src/app/` | shell, hash router, theme/toast/data providers, sidebar, topbar |
+| `frontend/src/api/client.ts` | typed HTTP client, upload progress, error normalization |
+| `frontend/src/api/types.ts` | response types shared by the four features |
+| `frontend/src/features/documents/` | upload/paste, list, search, detail, delete |
+| `frontend/src/features/ask/` | question composer, grounded answer, citations, timings |
+| `frontend/src/features/map/` | 2D/3D map, focus, query overlay, inspector, projection hook |
+| `frontend/src/features/benchmark/` | real report, recall chart, method table, latency, config |
+| `frontend/src/lib/pca.ts`, `pca.worker.ts` | NIPALS PCA in a Web Worker with a synchronous fallback |
+| `frontend/src/lib/` | document colours, formatting, unit tests |
+| `frontend/src/ui/` | Button, Badge, Icon, Modal, PageHeader, states, toasts |
+| `frontend/src/styles/` | tokens, base, layout, UI primitives, per-feature styles |
 
 Rules for the frontend:
 
-- No fake embeddings. The old `textToEmbedding` with `Math.random()` jitter is
-  removed.
+- No fake embeddings. Every point comes from `GET /api/map`.
 - No benchmark numbers in the frontend. Numbers come from `bench.json` through the
   API.
-- The map is labelled as a 2D projection, not a truth.
-- The UI never calls Ollama directly. All model calls go through the backend.
-- Every error state has a sentence a user can act on: "Ollama is not running at
-  `localhost:11434`" is better than "Request failed."
+- The map is labelled as a PCA projection, not the HNSW graph and not ground truth.
+- The UI never calls Ollama or another provider directly. All model calls go through
+  the backend.
+- Every error state has a sentence a user can act on, plus a retry where retrying is
+  meaningful.
 
 ### 3.2 API layer
 
@@ -147,21 +150,21 @@ construction. Those belong to the product layer.
 
 | File | Responsibility |
 |---|---|
-| `product/document_store.{h,cpp}` | SQLite schema, transactions, CRUD, embeddings |
-| `product/chunker.{h,cpp}` | split text into overlapping chunks |
-| `product/ollama_client.{h,cpp}` | embed and generate over HTTP, timeouts, errors |
-| `product/rag.{h,cpp}` | retrieve, build prompt, call generate, attach citations |
+| `product/app.{h,cpp}` | lifecycle, one mutex, startup rebuild, sample seeding, recovery |
+| `product/document_store.{h,cpp}` | SQLite schema, transactions, CRUD, embeddings, metadata |
+| `product/chunker.{h,cpp}` | text extraction (`pdftotext`), word-boundary chunks, overlap |
+| `product/vector_index.{h,cpp}` | slots, chunk maps, incremental insert, tombstones, rebuild |
+| `product/providers.{h,cpp}` | hash/extractive/OpenAI-compatible providers and factory |
+| `product/ollama_client.{h,cpp}` | Ollama embed/generate adapter, timeouts, errors |
+| `product/rag.{h,cpp}` | retrieve, build prompt, call chat, attach citations |
 
 `DocumentStore` is the only code that writes SQL. It exposes typed methods, not a raw
 database handle.
 
-`OllamaClient` uses two endpoints:
-
-- embeddings: `POST /api/embeddings` (or `/api/embed` depending on the Ollama
-  version; keep one adapter and test it)
-- generation: `POST /api/generate`
-
-It must have timeouts. A hung Ollama call must not hang the whole server forever.
+`OllamaClient` uses the Ollama HTTP API with bounded timeouts. Provider clients are
+created per call, so a hung request cannot poison a shared connection. The same
+abstraction supports OpenAI-compatible embedding and chat endpoints. The offline hash
+and extractive providers are first-class implementations, not test doubles.
 
 `RagService` is the product's retrieval story:
 
@@ -172,17 +175,18 @@ question
   -> hnsw.search(query, k=5, ef=50)
   -> map slots to chunks
   -> build prompt with numbered sources
-  -> ollama.generate(prompt)
-  -> answer + citations + retrieved chunks + timings
+  -> chat provider generate(prompt)
+  -> answer + citations + retrieved chunks + query vector + timings
 ```
 
 If the index has no live chunks, return a clear "I could not find this in the uploaded
 documents" response without calling the LLM. If the index has chunks, the constrained
 prompt decides whether the sources answer; a refusal is returned with its sources, not
-replaced by general knowledge. If Ollama is down, return `503` with a fixable message.
-Never invent an answer from general knowledge and present it as document-grounded.
+replaced by general knowledge. If a configured provider is down, return a `503` with a
+fixable message. Never invent an answer from general knowledge and present it as
+document-grounded.
 
-### 3.4 Engine library (`vf_engine`)
+### 3.4 Engine library (`hnswhy_engine`)
 
 The engine is a static library linked by the server, the benchmark, and the tests.
 
@@ -297,12 +301,12 @@ The graph details, invariants, and prune example are in `HNSW-SPEC.md`.
 | `bench/fvecs.{h,cpp}` | read `.fvecs` / `.ivecs`, validate dimensions |
 | `bench/report.{h,cpp}` | write `bench.json` with metrics and run metadata |
 
-It links `vf_engine` and never links SQLite, Ollama, or the HTTP server. A benchmark
+It links `hnswhy_engine` and never links SQLite, Ollama, or the HTTP server. A benchmark
 run should work on a machine with no database and no model server.
 
 ### 3.6 Tests
 
-`backend/tests/` builds `hns_tests`, linking `vf_engine` (and, for integration tests,
+`backend/tests/` builds `hns_tests`, linking `hnswhy_engine` (and, for integration tests,
 the product layer). The test list and gates are in §11.
 
 ---
@@ -315,6 +319,7 @@ the product layer). The test list and gates are in §11.
 CREATE TABLE documents (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     title      TEXT NOT NULL,
+    source     TEXT NOT NULL,
     text       TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
@@ -322,6 +327,7 @@ CREATE TABLE documents (
 CREATE TABLE chunks (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    ordinal     INTEGER NOT NULL,
     text        TEXT NOT NULL,
     created_at  TEXT NOT NULL
 );
@@ -332,7 +338,12 @@ CREATE TABLE embeddings (
     vector   BLOB NOT NULL
 );
 
-CREATE INDEX idx_chunks_document ON chunks(document_id);
+CREATE TABLE meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE INDEX idx_chunks_document ON chunks(document_id, ordinal);
 ```
 
 Open the connection with `PRAGMA foreign_keys = ON`; SQLite does not enforce the
@@ -367,7 +378,7 @@ database is not silently indexed.
 ```text
 validate title/text
   -> split into chunks
-  -> embed each chunk (Ollama)
+  -> embed each chunk (configured provider)
   -> normalize each vector
   -> begin SQLite transaction
        insert document
@@ -380,8 +391,9 @@ validate title/text
 ```
 
 SQLite commits first. If the process dies before the graph inserts, the next startup
-rebuild repairs the graph. If an in-memory insert fails after commit, return an error
-and rebuild; the database remains the source of truth.
+rebuild repairs the graph. If an in-memory insert fails after commit, the request
+returns an error and the application rebuilds the in-memory index from SQLite
+immediately; the database remains the source of truth.
 
 ### 4.4 Delete
 
@@ -442,17 +454,15 @@ The full algorithm contract is `HNSW-SPEC.md`.
 
 ### 6.1 Upload and index
 
-1. User uploads `.txt`/`.md` or pastes text.
-2. Backend validates size and extracts plain text.
+1. User uploads `.pdf`/`.txt`/`.md` or pastes text.
+2. Backend validates size and extracts plain text. PDFs go through `pdftotext`.
 3. `Chunker` splits into ~350-word chunks with ~50-word overlap.
-4. `OllamaClient::embed` returns one vector per chunk.
+4. The configured embedding provider returns one vector per chunk. The default is
+   the offline hash embedder; Ollama and OpenAI-compatible endpoints are supported.
 5. Vectors are normalized.
-6. `DocumentStore` commits the document, chunks, and embeddings.
-7. `HNSW::insert` adds each slot.
+6. `DocumentStore` commits the document, chunks, and embeddings in one transaction.
+7. `VectorIndex` inserts each slot incrementally; the graph is not rebuilt.
 8. UI shows the document, chunk count, and indexing status.
-
-PDF extraction is deliberately deferred. A PDF library is a new dependency and a new
-failure surface; plain text and Markdown prove the flow.
 
 ### 6.2 Ask
 
@@ -474,14 +484,17 @@ honesty mechanism: a user can open the chunk that supposedly supports the senten
 
 ### 6.3 Map
 
-1. Backend samples up to 2,000 live chunks (default 1,000) and returns their vectors
-   plus document metadata.
-2. Frontend computes a 2D PCA (`lib/pca.js`) and draws points.
-3. The query and retrieved chunks are highlighted.
-4. The UI says: "2D projection of real embeddings; distances are approximate."
+1. Backend samples up to 1,200 live chunks and returns their vectors plus document
+   metadata.
+2. Frontend fits a three-component PCA with NIPALS power iteration, then normalizes
+   the corpus coordinates into the viewport.
+3. The user can switch between a 2D SVG view and a 3D canvas view, pan or orbit,
+   zoom, focus a document, inspect a point, and overlay the last query.
+4. Retrieved chunks are highlighted with query-coloured rings. The inspector shows
+   chunk text, document, ordinal, PC coordinates, and whether the point was cited.
 
-The map is a visual aid, not a benchmark and not a proof of cluster quality. If PCA
-looks messy, that is allowed; the embeddings are real.
+The map is a visual aid, not a benchmark and not a drawing of HNSW edges. If PCA looks
+messy, that is allowed; the embeddings are real.
 
 ### 6.4 Benchmark tab
 
@@ -500,22 +513,23 @@ All endpoints are under `/api`. JSON in, JSON out, except document upload which 
 
 | Method | Path | Body / query | Returns |
 |---|---|---|---|
-| `GET` | `/api/health` | — | `{ status, ollama, db, vectors }` |
-| `GET` | `/api/status` | — | counts, build info, benchmark availability |
-| `POST` | `/api/documents` | multipart `file` or JSON `{title,text}` | `{ document_id, chunks }` |
-| `GET` | `/api/documents` | — | `[{ id, title, chunks, created_at }]` |
-| `DELETE` | `/api/documents/{id}` | — | `{ deleted: true }` |
-| `POST` | `/api/ask` | `{ question, k? }` | `{ answer, sources, retrieved, timings }` |
-| `GET` | `/api/map` | `?limit=1000` | `{ points: [{ chunk_id, document_id, title, vector }] }` |
-| `GET` | `/api/benchmark` | — | `bench.json` or `{ available: false }` |
+| `GET` | `/api/health` | — | status, database, store, embedding, and chat availability |
+| `GET` | `/api/status` | — | provider/dimension, index counts, store totals, benchmark availability |
+| `POST` | `/api/documents` | multipart `file` or JSON `{title,text}` | `{ document }` |
+| `GET` | `/api/documents` | — | `[{ id, title, source, chunk_count, char_count, created_at }]` |
+| `GET` | `/api/documents/{id}` | — | `{ document, text, chunks }` |
+| `DELETE` | `/api/documents/{id}` | — | `{ deleted: true, id }` |
+| `POST` | `/api/ask` | `{ question, k? }` | `{ answer, sources, query_vector, timings_ms, models }` |
+| `GET` | `/api/map` | `?limit=800` | `{ total_chunks, sampled, points: [{ chunk_id, document_id, title, ordinal, preview, vector }] }` |
+| `GET` | `/api/benchmark` | — | `{ available: true, report }` or `{ available: false, message, command }` |
 
 Error shape:
 
 ```json
 {
   "error": {
-    "code": "OLLAMA_UNAVAILABLE",
-    "message": "Ollama is not reachable at localhost:11434. Start it with `ollama serve`."
+    "code": "PROVIDER_UNAVAILABLE",
+    "message": "The configured embedding provider is not reachable."
   }
 }
 ```
@@ -524,9 +538,11 @@ Validation rules:
 
 - `question`: non-empty, max 2,000 characters.
 - `k`: 1–20, default 5.
-- document text: non-empty after trimming, max 2 MB per upload in v1.
-- title: non-empty, max 200 characters.
-- map `limit`: 1–2,000.
+- document text: non-empty after trimming, max 4 MB per upload. The HTTP server
+  accepts request payloads up to 25 MB, so the text limit is enforced by the
+  application, not the transport.
+- title: max 200 characters; omitted titles derive from the source name.
+- map `limit`: 1–2,000, default 800.
 - `DELETE /api/documents/{id}`: return `404` if the document does not exist; otherwise
   delete and return `{ "deleted": true }`.
 
@@ -541,16 +557,24 @@ behind a simple access gate or accept that anyone can upload and delete document
 The benchmark is a separate CLI:
 
 ```bash
-./build/hns_bench \
+scripts/fetch_sift.sh   # once, if data/sift is missing
+scripts/run_bench.sh    # builds release, computes ground truth, runs the sweep
+```
+
+The script invokes `build/backend/hns_gt` and `build/backend/hns_bench` with the
+recorded parameters. The equivalent direct benchmark command is:
+
+```bash
+./build/backend/hns_bench \
   --base data/sift/sift_base.fvecs \
   --queries data/sift/sift_query.fvecs \
-  --groundtruth data/sift/sift100k_groundtruth.ivecs \
-  --groundtruth-dist data/sift/sift100k_groundtruth_dist.fvecs \
+  --gt-ids data/sift100k/gt_ids.ivecs \
+  --gt-dist data/sift100k/gt_dist.fvecs \
   --n 100000 --k 10 \
-  --M 16 --efConstruction 200 --ef 50 \
-  --ef-grid 10,20,50,100,200 \
-  --trials 3 \
-  --out docs/results/bench.json
+  --M 16 --ef-construction 200 \
+  --ef 10,20,50,100,200 \
+  --passes 3 --warmup 200 \
+  --output docs/results/bench.json
 ```
 
 The release report is committed under `docs/results/`; the dataset stays in
@@ -560,12 +584,12 @@ Protocol:
 
 1. Load and validate the base, queries, and ground truth.
 2. Build the index once; record build time.
-3. Warm up on 100 queries.
+3. Warm up on 200 queries.
 4. Run every `--ef-grid` point from the same build; for each point, run three timed
    passes over all 10,000 queries. `--ef` is the headline point.
 5. Compute recall against the exact prefix ground truth.
 6. Measure the exact-search baseline on the same queries, kernel, flags, and thread
-   count; reuse the cached baseline when the dataset/query/k triple is unchanged.
+   count, and store it as the `bruteforce` method in the same report.
 7. Write `bench.json` with metrics, the curve, and metadata.
 
 Metrics:
@@ -575,9 +599,9 @@ Metrics:
 - p50 / p95 / p99 latency
 - build time
 - peak RSS
-- bytes per vector
+- dataset bytes and vector count (bytes per vector follows from the two)
 - average distance computations per query
-- exact-search QPS and speedup
+- exact-search QPS; the UI derives the speedup ratio from the reported QPS values
 - parameter set and run metadata
 
 The SLO rule:
@@ -609,7 +633,7 @@ Failure behavior:
 | Ollama not running | `/api/ask` and upload return `503` with a fixable message |
 | Ollama timeout | request fails after the configured timeout; server stays up |
 | SQLite write fails | transaction rolls back; no partial document |
-| Graph insert fails after DB commit | return error; rebuild on next start or trigger rebuild |
+| Graph insert fails after DB commit | return error and rebuild the in-memory index from SQLite |
 | Benchmark file missing | Benchmark tab shows instructions, not a fake chart |
 | Embedding dimension mismatch | reject the document with a clear error |
 | Empty question | `400` with a validation message |
@@ -624,143 +648,83 @@ are normal product states.
 ## 10. File layout and build targets
 
 ```text
-vectorforge/                       # repo root (currently HNSWhy/)
+HNSWhy/                          # repo root
 ├── CMakeLists.txt                 # adds backend/
-├── CMakePresets.json              # release/test presets used by the README
+├── CMakePresets.json              # dev (ASan/UBSan), release, release-native, ci
 ├── frontend/
 │   ├── package.json
-│   ├── package-lock.json
 │   ├── index.html
-│   ├── vite.config.js
+│   ├── vite.config.ts
+│   ├── tsconfig.json
 │   └── src/
-│       ├── App.jsx
-│       ├── api.js
-│       ├── components/
-│       │   ├── DocumentsTab.jsx
-│       │   ├── AskTab.jsx
-│       │   ├── MapTab.jsx
-│       │   ├── BenchmarkTab.jsx
-│       │   └── common/
-│       └── lib/pca.js
+│       ├── App.tsx
+│       ├── main.tsx
+│       ├── components/            # layout, modals, scatters, answer view, icons
+│       ├── context/               # app data and theme providers
+│       ├── lib/                   # api, PCA, colors, format, router, types, tests
+│       ├── pages/                 # Documents, Ask, Map, Benchmark
+│       └── styles/                # tokens, base, components, pages
 │
 ├── backend/
 │   ├── CMakeLists.txt
-│   ├── third_party/
-│   │   ├── httplib.h
-│   │   └── json.hpp
+│   ├── third_party/               # httplib.h, json.hpp
 │   ├── src/
-│   │   ├── main.cpp                 # bootstrap only
-│   │   ├── api/
-│   │   │   └── routes.{h,cpp}
-│   │   ├── product/
-│   │   │   ├── document_store.{h,cpp}
-│   │   │   ├── chunker.{h,cpp}
-│   │   │   ├── ollama_client.{h,cpp}
-│   │   │   └── rag.{h,cpp}
-│   │   └── engine/
-│   │       ├── vector_store.{h,cpp}
-│   │       ├── distance.h
-│   │       ├── brute_force.{h,cpp}
-│   │       ├── hnsw.{h,cpp}
-│   │       └── metrics.{h,cpp}
-│   ├── bench/
-│   │   ├── main.cpp
-│   │   ├── fvecs.{h,cpp}
-│   │   └── report.{h,cpp}
+│   │   ├── main.cpp               # bootstrap only
+│   │   ├── api/routes.{h,cpp}
+│   │   ├── engine/                # vector_store, brute_force, hnsw, metrics
+│   │   └── product/
+│   │       ├── app.{h,cpp}        # lifecycle, mutex, seeding, recovery
+│   │       ├── config.{h,cpp}
+│   │       ├── document_store.{h,cpp}
+│   │       ├── chunker.{h,cpp}
+│   │       ├── vector_index.{h,cpp}
+│   │       ├── providers.{h,cpp}
+│   │       ├── ollama_client.{h,cpp}
+│   │       ├── http.{h,cpp}
+│   │       ├── rag.{h,cpp}
+│   │       ├── text.{h,cpp}
+│   │       └── errors.h
+│   ├── bench/                     # hns_bench, hns_gt, fvecs, report
 │   └── tests/
-│       ├── test_distance.cpp
-│       ├── test_store.cpp
-│       ├── test_brute.cpp
-│       ├── test_hnsw.cpp
-│       ├── test_prune.cpp
-│       ├── test_delete.cpp
-│       ├── test_persistence.cpp
-│       ├── test_api.cpp
-│       └── test_bench.cpp
+│       ├── framework/             # tiny test harness
+│       ├── unit/                  # engine, store, chunker, providers, RAG, persistence
+│       └── integration/           # API, siftsmall, benchmark
 │
-├── data/                            # gitignored
-│   ├── sift/
-│   └── vectorforge.db
+├── samples/                       # seeded only into a fresh database
 ├── scripts/
 │   ├── fetch_sift.sh
-│   └── run_bench.sh
+│   ├── run_bench.sh
+│   └── run_server.sh
+├── data/                          # gitignored datasets and local DB
 ├── docs/
 │   └── results/
 │       ├── README.md
-│       └── bench.json             # frozen release artifact (no dataset)
+│       └── bench.json             # frozen release artifact
 ├── README.md
 └── .gitignore
 ```
 
-That is roughly 25 non-test C++ source/header files (34 with tests) and a dozen
-frontend files. There is no 1,000-line `main.cpp`: `main.cpp` opens the database,
-loads the index, registers routes, and starts the server. The algorithm lives in
-`engine/`; the SQL lives in `product/document_store`; the prompts live in
-`product/rag`.
-
-The root `CMakeLists.txt` only calls `add_subdirectory(backend)`; the targets live in
-`backend/CMakeLists.txt`. The presets keep the build in root `build/`, matching the
-README commands.
+The root `CMakeLists.txt` only calls `add_subdirectory(backend)`; targets live in
+`backend/CMakeLists.txt`. Presets keep builds under `build/` (`build/` for release,
+`build/dev/` for sanitizers), matching the README commands.
 
 ### CMake targets
 
 ```cmake
-add_library(vf_engine STATIC
-    src/engine/vector_store.cpp
-    src/engine/brute_force.cpp
-    src/engine/hnsw.cpp
-    src/engine/metrics.cpp
-)
-target_include_directories(vf_engine PUBLIC src/engine)
-
-add_executable(vectorforge_server
-    src/main.cpp
-    src/api/routes.cpp
-    src/product/document_store.cpp
-    src/product/chunker.cpp
-    src/product/ollama_client.cpp
-    src/product/rag.cpp
-)
-target_include_directories(vectorforge_server PRIVATE src third_party)
-target_link_libraries(vectorforge_server PRIVATE vf_engine sqlite3)
-
-add_executable(hns_bench
-    bench/main.cpp
-    bench/fvecs.cpp
-    bench/report.cpp
-)
-target_include_directories(hns_bench PRIVATE bench)
-target_link_libraries(hns_bench PRIVATE vf_engine)
-
-add_executable(hns_tests
-    tests/test_distance.cpp
-    tests/test_store.cpp
-    tests/test_brute.cpp
-    tests/test_hnsw.cpp
-    tests/test_prune.cpp
-    tests/test_delete.cpp
-    tests/test_persistence.cpp
-    tests/test_api.cpp
-    tests/test_bench.cpp
-    bench/fvecs.cpp
-    bench/report.cpp
-    src/api/routes.cpp
-    src/product/document_store.cpp
-    src/product/chunker.cpp
-    src/product/ollama_client.cpp
-    src/product/rag.cpp
-)
-target_include_directories(hns_tests PRIVATE src bench third_party)
-target_link_libraries(hns_tests PRIVATE vf_engine sqlite3)
+add_library(hnswhy_engine STATIC ...)      # no SQLite, HTTP, JSON, or provider code
+add_library(hnswhy_product STATIC ...)     # app, store, index, providers, RAG, routes
+add_library(hnswhy_io STATIC ...)          # fvecs/ivecs and ground truth
+add_executable(hnswhy_server src/main.cpp)
+add_executable(hns_bench bench/main.cpp bench/report.cpp)
+add_executable(hns_gt bench/gt_main.cpp)
+add_executable(hns_tests ...)          # links hnswhy_engine, hnswhy_io, hnswhy_product
 ```
 
-`hns_tests` compiles the product and bench-support sources directly so the
-persistence, API, and report-schema tests exercise the real code. Only the engine is a
-shared library; there is no second engine implementation.
-
-Dependencies: C++20, CMake, `cpp-httplib` (header-only), `nlohmann/json`
-(header-only), SQLite3, Ollama running locally. The frontend uses the existing
-React/Vite stack.
+`hns_tests` links the same product and engine libraries as the server; there is no
+second implementation. The engine library does not know about documents, SQL, HTTP, or
+providers. Dependencies: C++20, CMake, `cpp-httplib` (header-only),
+`nlohmann/json` (header-only), SQLite3, and optionally OpenSSL for HTTPS provider
+URLs. Ollama is optional at runtime.
 
 ---
 
@@ -770,33 +734,37 @@ React/Vite stack.
 
 | Test | What it proves |
 |---|---|
-| `test_distance` | squared L2 is correct; normalization works; zero vector handled |
-| `test_store` | add/get/reserve; dimension checks; no out-of-bounds |
-| `test_brute` | exact top-k; ties deterministic by slot |
-| `test_hnsw` | insert/search on a small graph; recall on a fixed fixture; invariants |
-| `test_prune` | two-cluster test: nearest-only disconnects, heuristic keeps a bridge |
-| `test_delete` | deleted IDs never returned; live neighbours still found; entry/top-layer safe |
+| `test_distance` | squared L2, normalization, and invalid-dimension handling |
+| `test_vector_store` | add/get/reserve; dimension checks; contiguous storage |
+| `test_brute_force` | exact top-k; ties deterministic by slot |
+| `test_hnsw` | insert/search, insertion orders, duplicates, empty graphs, invariants |
+| `test_prune` | two-cluster diversity test; nearest-only disconnects, heuristic keeps a bridge |
+| `test_delete` | tombstones never returned; traversal survives; entry/top-layer safety |
+| `test_metrics` | recall and latency percentiles |
 
 ### 11.2 Product tests
 
 | Test | What it proves |
 |---|---|
-| `test_persistence` | insert -> restart -> rebuild -> same search results; delete -> restart -> gone |
-| `test_api` | upload/ask/delete with a fake Ollama; error paths; no partial document |
-| `test_bench` | fvecs/ivecs parsing; report schema; dirty-tree refusal |
+| `test_chunker` | word-boundary chunks, overlap, short input |
+| `test_document_store` | schema, transactions, cascade deletes, metadata, sampling |
+| `test_providers` | hash, extractive, Ollama/OpenAI request and error paths |
+| `test_vector_index` | slot mapping, incremental insert, tombstone delete, rebuild |
+| `test_rag` | retrieval, grounded prompt, citations, refusal |
+| `test_persistence` | insert -> restart -> rebuild -> same results; sample seeded once |
+| `test_api` | upload/ask/map/delete flow, multipart, validation, errors |
+| `test_bench` | fvecs/ivecs parsing, report schema |
 
-### 11.3 CI
+### 11.3 CI and sanitizers
 
-- Build `vf_engine`, `vectorforge_server`, `hns_bench`, `hns_tests`.
-- Run all tests.
-- Run `sift10k` with 1,000 queries and require `R@10 ≥ 0.90`.
-- Run the two-cluster prune test.
-- Run the persistence/restart test.
-- No 100k benchmark and no QPS gate in CI; shared runners are not a benchmark
-  machine.
+`.github/workflows/ci.yml` configures the `ci` preset, builds all targets, and runs
+`ctest`; a second job runs `npm ci`, `npm test`, and `npm run build` for the frontend.
+The committed sift10k fixture gate always runs. Siftsmall integration tests skip
+unless `HNSWHY_SIFTSMALL_DIR` points at a local dataset. Release verification on this
+machine runs the same suite with `HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall"`: **107/107
+pass**.
 
-Sanitizers: a separate `ASan+UBSan` build runs the engine and product tests. It is not
-the release build.
+The `dev` preset enables ASan and UBSan. The full suite is sanitizer-clean.
 
 ---
 
@@ -828,12 +796,12 @@ measured separately. Do not mix them.
 
 | Area | Ships |
 |---|---|
-| Product | upload/paste, list, delete, ask, citations, 2D map, benchmark tab |
-| Persistence | SQLite source of truth; rebuild on startup |
+| Product | PDF/TXT/Markdown upload, paste, list, detail, delete, ask, citations, 2D/3D map, benchmark tab |
+| Persistence | SQLite source of truth; incremental insert; tombstones; rebuild on startup |
 | Engine | flat store, squared L2, brute force, HNSW insert/search/prune, mark-deleted |
-| Evidence | SIFT-100k, 10k queries, 3 trials per curve point, `bench.json`, README table |
-| Safety | unit/invariant tests, two-cluster test, recall gate on `sift10k`, persistence test |
-| Ops | documented local run; documented configuration; no auth |
+| Evidence | SIFT-100k, 10k queries, 3 passes per curve point, `bench.json`, README table |
+| Safety | 107 tests, two-cluster test, siftsmall recall gate, persistence test, ASan/UBSan |
+| Ops | documented local run, `.env.example`, sample KB, no auth |
 
 ### Stretch (after v1)
 
@@ -841,7 +809,6 @@ measured separately. Do not mix them.
 - Graph snapshot with a corruption test.
 - Physical compaction of tombstones.
 - Concurrent read path.
-- PDF extraction.
 - Auth / access gate.
 - Reranker or hybrid search.
 - Streaming answer.
@@ -854,7 +821,6 @@ measured separately. Do not mix them.
 - Multi-tenant SaaS, billing, teams.
 - Agents, tool calling, Graph RAG.
 - Distributed or multi-node search.
-- 3D map.
 - KD-tree.
 - Multi-metric benchmark.
 - Static showcase site.
@@ -869,12 +835,12 @@ These match `DECISIONS.md` D20. If one returns, it needs a new decision entry.
 
 | Risk | Why it matters | Mitigation |
 |---|---|---|
-| The merge is too big | Product + engine can become two unfinished projects | Build the engine first; keep the product to four tabs; obey D20 |
-| Frontend carries old overclaims | Fake embeddings and "production-grade" language destroy trust | Delete `textToEmbedding`; rewrite README; no number without `bench.json` |
-| Ollama is slow or unavailable | The demo fails on a stranger's machine | Health check; clear 503; document `ollama serve`; test with a fake client |
+| Scope creep | Product + engine can become two unfinished projects | Keep the product to four tabs; obey D20 |
+| Frontend overclaims | Fake embeddings and "production-grade" language destroy trust | Every map point comes from the API; no number without `bench.json` |
+| Ollama is slow or unavailable | The demo fails on a stranger's machine | Offline defaults; health check; clear 503; document `ollama serve` |
 | SQLite and graph drift | Wrong citations or missing results | SQLite is the source of truth; rebuild on startup; persistence test |
 | Startup rebuild is slow | Bad first-run experience | Measure it; target 10k chunks; show a loading state; graph snapshot is stretch |
-| PCA map is misleading | Users read clusters as truth | Label it as a 2D projection; show sample size; no benchmark claims |
+| PCA map is misleading | Users read clusters as truth | Label the source and projected dimensions; show sample size; no benchmark claims |
 | Laptop benchmark noise | Numbers vary run to run | Three trials; record CPU/flags; report range; no cloud claim |
 | Scope creep | The project never ships | D20 cut list; one active project; demo before extras |
 
@@ -887,10 +853,10 @@ v1 is done when all of these are true:
 1. A user can upload or paste a document, see it listed, and delete it.
 2. A restart preserves documents and search results.
 3. A question returns an answer with citations to real retrieved chunks.
-4. The map shows real embeddings in 2D, with the query and hits highlighted.
+4. The map shows real embeddings in 2D and 3D, with the query and hits highlighted.
 5. The Benchmark tab shows a real SIFT-100k report, its parameters, and its command.
 6. `hns_tests` passes, including the two-cluster prune test and the restart test.
-7. `sift10k` CI recall is at least 0.90 at the chosen configuration.
+7. The siftsmall recall gate passes at the chosen configuration (R@1 0.99, R@10 0.997).
 8. The README has the measured table, limitations, and a reproducible local setup.
 9. The 60-second demo works without editing code or faking data.
 10. The docs match the implementation; if they do not, fix the docs or the code.

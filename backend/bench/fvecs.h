@@ -8,7 +8,7 @@
 
 #include "engine/vector_store.h"
 
-namespace vf {
+namespace hnswhy {
 
 // In-memory float matrix for query sets and other small fvecs files.
 struct FloatMatrix {
@@ -45,4 +45,4 @@ void write_fvecs(const std::filesystem::path& path, std::span<const float> data,
 void write_ivecs(const std::filesystem::path& path, std::span<const std::int32_t> data,
                  std::size_t n, std::size_t dim);
 
-}  // namespace vf
+}  // namespace hnswhy

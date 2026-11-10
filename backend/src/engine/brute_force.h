@@ -6,7 +6,7 @@
 #include "engine/types.h"
 #include "engine/vector_store.h"
 
-namespace vf {
+namespace hnswhy {
 
 // Exact k-nearest-neighbour search. This is the answer key for tests and the
 // benchmark baseline; it is never the product search path.
@@ -22,4 +22,4 @@ private:
     const VectorStore& store_;
 };
 
-}  // namespace vf
+}  // namespace hnswhy

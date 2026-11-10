@@ -1,8 +1,8 @@
-# HNSWhy / VectorForge — Implementation Progress
+# HNSWhy — Implementation Progress
 
 > Persistent state for resuming work. Updated at the end of every phase.
 > Vision: `docs/goal.md`. Decisions: `docs/DECISIONS.md`. Architecture reference:
-> `docs/ARCHITECTURE.md` (being revised as code lands).
+> `docs/ARCHITECTURE.md`.
 
 ## Status
 
@@ -13,9 +13,9 @@
 | 2 | fvecs/ivecs loader, ground-truth tool, siftsmall gate | done |
 | 3 | HNSW (insert/search/prune/tombstones/validate) + tests | done |
 | 4 | Benchmark CLI, SIFT-100k ground truth, real `bench.json` | done |
-| 5 | Product backend: SQLite, chunking, providers, RAG, HTTP API | in progress |
-| 6 | Frontend from scratch: Documents, Ask, Map (2D/3D), Benchmark | pending |
-| 7 | Sample knowledge base, end-to-end tests, critics, docs, release | pending |
+| 5 | Product backend: SQLite, chunking, providers, RAG, HTTP API | done |
+| 6 | Frontend from scratch: Documents, Ask, Map (2D/3D), Benchmark | done |
+| 7 | Sample knowledge base, end-to-end tests, critics, docs, release | done |
 
 ## Environment (verified)
 
@@ -23,8 +23,9 @@
 - SQLite 3.54.0 with development headers
 - Node 26.13.0 / npm 11.20.0
 - `pdftotext` available (PDF extraction)
-- Ollama is **not installed**; providers must degrade cleanly and be configurable
-- SIFT and siftsmall datasets already downloaded under `data/`
+- Ollama is not installed; offline providers are the default and Ollama paths are
+  configurable and covered by provider tests
+- SIFT and siftsmall datasets under `data/`
 - CPU: 12th Gen Intel Core i5-12450H, 12 hardware threads
 
 ## Decisions taken during implementation
@@ -36,8 +37,8 @@
   startup with a clear re-embed path instead of mixing embedding spaces.
 - D23: PDF extraction shells out to `pdftotext` (available on the target
   machine); no PDF parsing code is vendored.
-- D24: the frontend is built from scratch (React + Vite), not imported from the
-  old VectorForge project.
+- D24: the frontend is built from scratch (React + Vite), not imported from an
+  earlier prototype.
 - D25: HNSW tombstones stay in the graph and remain traversable. Queries filter
   them from results; insertion beams include them, so a new node can attach
   even after every previous node was deleted.
@@ -48,6 +49,20 @@
   BruteForce; the shipped SIFT-1M answer key is not valid for a 100k prefix.
   The benchmark verifies the exact baseline against that ground truth before
   reporting HNSW numbers.
+- D28: the Map tab projects real sampled embeddings with a client-side NIPALS
+  PCA. It is a visualization of the embedding space, not a drawing of HNSW edges.
+- D29: the sample knowledge base has eight Markdown documents (16 chunks) and is
+  seeded only into a fresh database with the offline hash embedder.
+
+## Test and verification state
+
+- Release suite: **107/107 passed** (with `HNSWHY_SIFTSMALL_DIR` set).
+- ASan/UBSan suite: **107/107 passed**, no sanitizer reports.
+- Frontend: `tsc --noEmit && vite build` passes; **16/16 Vitest tests passed**.
+- Siftsmall gate: R@1 0.99, R@10 0.997 with the default HNSW configuration.
+- Live smoke test on the sample library: ask with citations, 2D/3D map, and
+  benchmark views verified in Chromium and Firefox with no console or page
+  errors.
 
 ## Log
 
@@ -76,7 +91,7 @@ entry point, delete-all then insert, and metrics.
 
 Real-data gate on siftsmall (10k x 128, 100 queries, M=16, M0=32,
 efConstruction=200, efSearch=50): build ~1.38 s, **R@1 0.99, R@10 0.997**,
-p50 ~0.046 ms, p95 ~0.07 ms. Full suite is ASan/UBSan clean.
+p50 ~0.046 ms, p95 ~0.07 ms.
 
 Two real bugs were found only by the larger data: a back-edge written into a
 full flat row corrupted the next node's adjacency, and duplicate vectors formed
@@ -89,10 +104,39 @@ BruteForce as the baseline, and writes a structured JSON report with dataset,
 config, build time, RSS, recall, QPS, latency percentiles, distance counts,
 compiler and hardware.
 
-SIFT-100k ground truth (10k queries, top 100) was generated with `hns_gt` in
-55.4 s. Release run: build 36.1 s, peak RSS 92.5 MB. At `efSearch=50`,
+SIFT-100k ground truth (10k queries, top 100) was generated with `hns_gt`.
+Release run: build 36.1 s, peak RSS 92.5 MB. At `efSearch=50`,
 **R@1 0.9926, R@10 0.9839, 6,895 QPS**, p95 0.184 ms, versus exact search at
 193.5 QPS — a 35.6x speedup at that recall. The exact baseline matched the
 ground-truth distances. `docs/results/bench.json` holds the full curve.
 
-52 tests pass in release; the full suite is ASan/UBSan clean.
+### Phase 5 — product backend (done)
+SQLite schema with documents, chunks, embeddings, and metadata; stable
+autoincrement IDs; cascade deletes; WAL and foreign keys. Chunking with
+word-boundary splitting and overlap. Offline hash embedding and extractive chat
+providers, plus Ollama and OpenAI-compatible HTTP clients. Embedding-space
+metadata and `--reembed`. Incremental `VectorIndex` with slot maps, tombstones,
+and guarded rebuilds. Grounded RAG prompt, numbered citations, refusal path.
+HTTP API for health, status, documents, ask, map, and benchmark, with static
+frontend serving and a consistent error shape. One application mutex serializes
+shared state; provider clients are per call.
+
+Implementation lives in `backend/src/product/` and `backend/src/api/`; the
+engine remains independent in `backend/src/engine/`.
+
+### Phase 6 — frontend (done)
+Built from scratch with React 19, TypeScript, and Vite. Four sections:
+Documents (upload/paste/detail/delete), Ask (composer, answer, sources,
+timings, model metadata), Map (2D SVG and 3D canvas PCA projections with pan,
+zoom, orbit, document focus, point inspection, query overlay, retrieval
+highlights), and Benchmark (real report only). Design tokens for light/dark,
+Inter/JetBrains Mono, custom icons, responsive layouts, keyboard focus, and
+loading/empty/error states. Frontend is served from `frontend/dist` by the C++
+server in production.
+
+### Phase 7 — release (done)
+Sample KB expanded to eight documents / sixteen chunks. Frontend unit tests
+added for PCA and formatting. Responsive layouts verified at 390, 768, and 1440
+pixels. Map contrast and point sizing tuned for sparse and dense maps. README,
+architecture notes, progress log, `.env.example`, and run scripts updated to the
+shipped code. Full release and sanitizer suites pass.

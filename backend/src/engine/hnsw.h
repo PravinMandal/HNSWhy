@@ -9,7 +9,7 @@
 #include "engine/types.h"
 #include "engine/vector_store.h"
 
-namespace vf {
+namespace hnswhy {
 
 enum class PruneStrategy { Heuristic, NearestOnly };
 
@@ -30,6 +30,8 @@ struct HNSWParams {
 class HNSW {
 public:
     HNSW(const VectorStore& store, HNSWParams params);
+    HNSW(const HNSW&) = delete;
+    HNSW& operator=(const HNSW&) = delete;
 
     // Inserts every slot currently in the store. Only valid on an empty graph.
     void build();
@@ -40,10 +42,26 @@ public:
     // never return it. Idempotent.
     void remove(Slot id);
 
+    // Returns up to min(k, live) results. Searches are not thread-safe: the
+    // graph keeps scratch state and counters. The caller must serialise calls
+    // (the product uses one application mutex).
+    //
+    // HNSW can leave parts of the graph unreachable when many vectors are
+    // exactly equidistant (duplicates, one-hot data). The graph tracks layer-0
+    // connectivity; while it is disconnected, search merges the graph result
+    // with an exact scan of the live slots so the returned top-k stays exact
+    // and consistent across k. Connected graphs use the normal HNSW path.
     SearchResult search(std::span<const float> query, std::size_t k, std::size_t ef);
 
-    // Throws std::runtime_error on a broken invariant.
+    // Throws std::runtime_error on a structural invariant violation (degree
+    // caps, bogus edges, count drift). It does not require every live node to
+    // be graph-reachable; see search().
     void validate() const;
+
+    // Number of live-or-deleted nodes reachable from the entry point on the
+    // given layer. Tests use this to prove that pruning keeps both clusters
+    // connected; it is O(N * M).
+    std::size_t reachableCount(int layer) const;
 
     // Exposed so tests can exercise the prune rule directly.
     std::vector<Slot> selectNeighbours(Slot ref, std::span<const Candidate> candidates,
@@ -80,6 +98,8 @@ private:
                                        bool liveOnly);
     void connect(Slot id, std::span<const Slot> selected, int layer);
     void prune(Slot id, int layer, std::size_t limit);
+    void recomputeConnectivity();
+    void noteEdgeRemoved(Slot target);
 
     void ensureNode(Slot id, int level);
     void ensureCapacity(Slot id);
@@ -99,6 +119,9 @@ private:
 
     std::vector<std::uint8_t> level_;
     std::vector<std::uint8_t> deleted_;
+    std::vector<std::uint32_t> level_count_;
+    std::vector<std::uint32_t> in_degree0_;
+    bool layer0_connected_ = true;
 
     std::size_t slot_count_ = 0;
     std::size_t live_count_ = 0;
@@ -111,4 +134,4 @@ private:
     mutable std::uint64_t hops_ = 0;
 };
 
-}  // namespace vf
+}  // namespace hnswhy

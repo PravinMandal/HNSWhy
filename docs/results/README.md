@@ -27,7 +27,8 @@ The script writes `docs/results/bench.json`. Raw SIFT files and the generated
 - Exact baseline: `BruteForce` over the same 100k base and all 10,000 queries.
   It matched the ground-truth distances within `1e-4`.
 - Build: `Release` (`-O3`) GCC 16.2.1, 12th Gen Intel Core i5-12450H,
-  Linux 7.2.11. The report records the same fields.
+  Linux 7.2.11. The report records build type, compiler, CPU, OS, and dataset
+  paths; `-O3` comes from the Release preset.
 
 ## Results (`efSearch = 50`)
 

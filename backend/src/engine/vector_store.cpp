@@ -1,9 +1,30 @@
 #include "engine/vector_store.h"
 
+#include <functional>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
-namespace vf {
+namespace hnswhy {
+
+VectorStore::VectorStore(VectorStore&& other) noexcept
+    : data_(std::move(other.data_)), dim_(other.dim_), size_(other.size_) {
+    other.data_.clear();
+    other.dim_ = 0;
+    other.size_ = 0;
+}
+
+VectorStore& VectorStore::operator=(VectorStore&& other) noexcept {
+    if (this != &other) {
+        data_ = std::move(other.data_);
+        dim_ = other.dim_;
+        size_ = other.size_;
+        other.data_.clear();
+        other.dim_ = 0;
+        other.size_ = 0;
+    }
+    return *this;
+}
 
 void VectorStore::reserve(std::size_t n, std::size_t dim) {
     if (dim == 0) {
@@ -14,6 +35,9 @@ void VectorStore::reserve(std::size_t n, std::size_t dim) {
     }
     if (size_ != 0) {
         throw std::logic_error("VectorStore::reserve: store is not empty");
+    }
+    if (n > std::numeric_limits<std::size_t>::max() / dim) {
+        throw std::overflow_error("VectorStore::reserve: size overflow");
     }
     dim_ = dim;
     data_.reserve(n * dim);
@@ -30,6 +54,17 @@ Slot VectorStore::add(std::span<const float> v) {
     }
     if (size_ == static_cast<std::size_t>(kInvalidSlot)) {
         throw std::overflow_error("VectorStore::add: slot space exhausted");
+    }
+
+    // std::vector::insert is not defined when the source aliases its own
+    // buffer. Copy first so appending a view of an existing row is safe.
+    std::vector<float> copy;
+    const bool aliases =
+        !data_.empty() && !std::less<const float*>{}(v.data(), data_.data()) &&
+        std::less<const float*>{}(v.data(), data_.data() + data_.size());
+    if (aliases) {
+        copy.assign(v.begin(), v.end());
+        v = std::span<const float>(copy);
     }
 
     const Slot id = static_cast<Slot>(size_);
@@ -52,14 +87,17 @@ std::span<float> VectorStore::append_uninitialized(std::size_t n) {
     if (dim_ == 0) {
         throw std::logic_error("VectorStore::append_uninitialized: dimension unknown");
     }
-    if (n > static_cast<std::size_t>(kInvalidSlot) - size_) {
+    const std::size_t old_size = size_;
+    if (n > static_cast<std::size_t>(kInvalidSlot) - old_size) {
         throw std::overflow_error("VectorStore::append_uninitialized: slot space exhausted");
     }
+    if ((old_size + n) > std::numeric_limits<std::size_t>::max() / dim_) {
+        throw std::overflow_error("VectorStore::append_uninitialized: size overflow");
+    }
 
-    const std::size_t old_size = size_;
     data_.resize((old_size + n) * dim_);
     size_ = old_size + n;
     return std::span<float>(data_.data() + old_size * dim_, n * dim_);
 }
 
-}  // namespace vf
+}  // namespace hnswhy

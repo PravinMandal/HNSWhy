@@ -28,7 +28,7 @@
     "query_count": 10000
   },
   "engine": {
-    "name": "VectorForge / HNSWhy",
+    "name": "HNSWhy",
     "version": "0.1.0"
   },
   "environment": {

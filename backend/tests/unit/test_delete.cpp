@@ -14,11 +14,11 @@
 
 namespace {
 
-vf::VectorStore make_random_store(std::size_t n, std::size_t dim, std::uint32_t seed) {
+hnswhy::VectorStore make_random_store(std::size_t n, std::size_t dim, std::uint32_t seed) {
     std::mt19937 rng(seed);
     std::uniform_real_distribution<float> uniform(-1.0f, 1.0f);
     std::vector<float> row(dim);
-    vf::VectorStore store;
+    hnswhy::VectorStore store;
     store.reserve(n, dim);
     for (std::size_t i = 0; i < n; ++i) {
         for (float& value : row) {
@@ -29,8 +29,8 @@ vf::VectorStore make_random_store(std::size_t n, std::size_t dim, std::uint32_t 
     return store;
 }
 
-vf::HNSWParams params() {
-    vf::HNSWParams p;
+hnswhy::HNSWParams params() {
+    hnswhy::HNSWParams p;
     p.M = 8;
     p.M0 = 16;
     p.efConstruction = 100;
@@ -38,20 +38,33 @@ vf::HNSWParams params() {
     return p;
 }
 
+hnswhy::VectorStore live_store(const hnswhy::VectorStore& store, const hnswhy::HNSW& graph) {
+    hnswhy::VectorStore live;
+    live.reserve(store.size() - graph.size(), store.dim());
+    for (hnswhy::Slot id = 0; id < store.size(); ++id) {
+        if (!graph.isDeleted(id)) {
+            live.add(store.get(id));
+        }
+    }
+    return live;
+}
+
 }  // namespace
 
-VF_TEST(hnsw_deleted_nodes_are_never_returned) {
-    const vf::VectorStore store = make_random_store(200, 6, 21);
-    vf::HNSW hnsw(store, params());
+HNSWHY_TEST(hnsw_deleted_nodes_are_never_returned) {
+    const hnswhy::VectorStore store = make_random_store(200, 6, 21);
+    hnswhy::HNSW hnsw(store, params());
     hnsw.build();
 
-    for (vf::Slot id = 0; id < 100; ++id) {
+    for (hnswhy::Slot id = 0; id < 100; ++id) {
         hnsw.remove(id);
     }
     CHECK_EQ(hnsw.size(), std::size_t{100});
     CHECK_EQ(hnsw.slot_count(), std::size_t{200});
     hnsw.validate();
 
+    const hnswhy::VectorStore live = live_store(store, hnsw);
+    const hnswhy::BruteForce brute_force(live);
     std::mt19937 rng(8);
     std::uniform_real_distribution<float> uniform(-1.0f, 1.0f);
     for (int q = 0; q < 20; ++q) {
@@ -59,25 +72,28 @@ VF_TEST(hnsw_deleted_nodes_are_never_returned) {
         for (float& value : query) {
             value = uniform(rng);
         }
-        const vf::SearchResult result = hnsw.search(query, 10, 60);
+        const hnswhy::SearchResult result = hnsw.search(query, 10, 60);
+        const hnswhy::SearchResult truth = brute_force.search(query, 10);
         CHECK_EQ(result.ids.size(), std::size_t{10});
-        for (const vf::Slot id : result.ids) {
+        for (const hnswhy::Slot id : result.ids) {
             CHECK(id >= 100);
             CHECK(!hnsw.isDeleted(id));
         }
+        CHECK(hnswhy::tie_aware_recall_at_k(result.distances, truth.distances, 10) >= 0.8);
     }
 }
 
-VF_TEST(hnsw_search_works_after_the_entry_point_is_deleted) {
-    const vf::VectorStore store = make_random_store(180, 5, 22);
-    vf::HNSW hnsw(store, params());
+HNSWHY_TEST(hnsw_search_works_after_the_entry_point_is_deleted) {
+    const hnswhy::VectorStore store = make_random_store(180, 5, 22);
+    hnswhy::HNSW hnsw(store, params());
     hnsw.build();
 
-    const vf::Slot entry = hnsw.entryPoint();
+    const hnswhy::Slot entry = hnsw.entryPoint();
     hnsw.remove(entry);
     hnsw.validate();
 
-    const vf::BruteForce brute_force(store);
+    const hnswhy::VectorStore live = live_store(store, hnsw);
+    const hnswhy::BruteForce brute_force(live);
     std::mt19937 rng(9);
     std::uniform_real_distribution<float> uniform(-1.0f, 1.0f);
     for (int q = 0; q < 20; ++q) {
@@ -85,20 +101,20 @@ VF_TEST(hnsw_search_works_after_the_entry_point_is_deleted) {
         for (float& value : query) {
             value = uniform(rng);
         }
-        const vf::SearchResult truth = brute_force.search(query, 5);
-        const vf::SearchResult result = hnsw.search(query, 5, 50);
+        const hnswhy::SearchResult truth = brute_force.search(query, 5);
+        const hnswhy::SearchResult result = hnsw.search(query, 5, 50);
         CHECK_EQ(result.ids.size(), std::size_t{5});
         CHECK(std::find(result.ids.begin(), result.ids.end(), entry) == result.ids.end());
-        CHECK(vf::tie_aware_recall_at_k(result.distances, truth.distances, 5) >= 0.8);
+        CHECK(hnswhy::tie_aware_recall_at_k(result.distances, truth.distances, 5) >= 0.9);
     }
 }
 
-VF_TEST(hnsw_can_insert_after_every_node_is_deleted) {
-    vf::VectorStore store = make_random_store(80, 4, 23);
-    vf::HNSW hnsw(store, params());
+HNSWHY_TEST(hnsw_can_insert_after_every_node_is_deleted) {
+    hnswhy::VectorStore store = make_random_store(80, 4, 23);
+    hnswhy::HNSW hnsw(store, params());
     hnsw.build();
 
-    for (vf::Slot id = 0; id < store.size(); ++id) {
+    for (hnswhy::Slot id = 0; id < store.size(); ++id) {
         hnsw.remove(id);
     }
     CHECK_EQ(hnsw.size(), std::size_t{0});
@@ -108,21 +124,21 @@ VF_TEST(hnsw_can_insert_after_every_node_is_deleted) {
     CHECK(hnsw.search(query, 5, 20).ids.empty());
 
     const std::array<float, 4> fresh{0.0f, 0.0f, 0.0f, 0.0f};
-    const vf::Slot new_id = store.add(std::span<const float>(fresh));
-    CHECK_EQ(new_id, vf::Slot{80});
+    const hnswhy::Slot new_id = store.add(std::span<const float>(fresh));
+    CHECK_EQ(new_id, hnswhy::Slot{80});
     hnsw.insert(new_id);
     hnsw.validate();
 
     CHECK_EQ(hnsw.size(), std::size_t{1});
-    const vf::SearchResult result = hnsw.search(query, 3, 20);
+    const hnswhy::SearchResult result = hnsw.search(query, 3, 20);
     CHECK_EQ(result.ids.size(), std::size_t{1});
     CHECK_EQ(result.ids[0], new_id);
     CHECK_NEAR(result.distances[0], 0.0, 0.0);
 }
 
-VF_TEST(hnsw_remove_is_idempotent) {
-    const vf::VectorStore store = make_random_store(20, 3, 24);
-    vf::HNSW hnsw(store, params());
+HNSWHY_TEST(hnsw_remove_is_idempotent) {
+    const hnswhy::VectorStore store = make_random_store(20, 3, 24);
+    hnswhy::HNSW hnsw(store, params());
     hnsw.build();
 
     hnsw.remove(3);
@@ -131,25 +147,25 @@ VF_TEST(hnsw_remove_is_idempotent) {
     CHECK(hnsw.isDeleted(3));
 }
 
-VF_TEST(hnsw_remove_rejects_out_of_range) {
-    const vf::VectorStore store = make_random_store(10, 3, 25);
-    vf::HNSW hnsw(store, params());
+HNSWHY_TEST(hnsw_remove_rejects_out_of_range) {
+    const hnswhy::VectorStore store = make_random_store(10, 3, 25);
+    hnswhy::HNSW hnsw(store, params());
     hnsw.build();
 
     CHECK_THROWS_AS(hnsw.remove(10), std::out_of_range);
     CHECK_THROWS_AS(hnsw.isDeleted(10), std::out_of_range);
 }
 
-VF_TEST(hnsw_all_deleted_index_returns_less_than_k) {
-    const vf::VectorStore store = make_random_store(30, 3, 26);
-    vf::HNSW hnsw(store, params());
+HNSWHY_TEST(hnsw_all_deleted_index_returns_less_than_k) {
+    const hnswhy::VectorStore store = make_random_store(30, 3, 26);
+    hnswhy::HNSW hnsw(store, params());
     hnsw.build();
-    for (vf::Slot id = 0; id < store.size(); ++id) {
+    for (hnswhy::Slot id = 0; id < store.size(); ++id) {
         hnsw.remove(id);
     }
 
     const std::vector<float> query{0.0f, 0.0f, 0.0f};
-    const vf::SearchResult result = hnsw.search(query, 10, 30);
+    const hnswhy::SearchResult result = hnsw.search(query, 10, 30);
     CHECK(result.ids.empty());
     CHECK(result.distances.empty());
 }

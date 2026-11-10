@@ -5,9 +5,10 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <typeinfo>
 #include <vector>
 
-namespace vftest {
+namespace hnswhytest {
 
 struct Failure : std::runtime_error {
     explicit Failure(std::string message) : std::runtime_error(std::move(message)) {}
@@ -24,57 +25,63 @@ struct Registrar {
     Registrar(std::string name, std::function<void()> fn);
 };
 
-}  // namespace vftest
+}  // namespace hnswhytest
 
-#define VF_TEST(name)                                                     \
-    static void vf_test_##name();                                         \
-    static ::vftest::Registrar vf_reg_##name(#name, vf_test_##name);      \
-    static void vf_test_##name()
+#define HNSWHY_TEST(name)                                                     \
+    static void hnswhy_test_##name();                                         \
+    static ::hnswhytest::Registrar hnswhy_reg_##name(#name, hnswhy_test_##name);      \
+    static void hnswhy_test_##name()
 
 #define CHECK(condition)                                                                  \
     do {                                                                                  \
         if (!(condition)) {                                                               \
-            throw ::vftest::Failure(std::string(__FILE__) + ":" + std::to_string(__LINE__) + \
+            throw ::hnswhytest::Failure(std::string(__FILE__) + ":" + std::to_string(__LINE__) + \
                                     ": CHECK failed: " #condition);                       \
         }                                                                                 \
     } while (false)
 
 #define CHECK_EQ(a, b)                                                                    \
     do {                                                                                  \
-        const auto& vf_a = (a);                                                           \
-        const auto& vf_b = (b);                                                           \
-        if (!(vf_a == vf_b)) {                                                            \
-            std::ostringstream vf_os;                                                     \
-            vf_os << __FILE__ << ":" << __LINE__ << ": CHECK_EQ failed: " #a " == " #b    \
-                  << " (" << vf_a << " vs " << vf_b << ")";                               \
-            throw ::vftest::Failure(vf_os.str());                                         \
+        const auto hnswhy_a = (a);                                                            \
+        const auto hnswhy_b = (b);                                                            \
+        if (!(hnswhy_a == hnswhy_b)) {                                                            \
+            std::ostringstream hnswhy_os;                                                     \
+            hnswhy_os << __FILE__ << ":" << __LINE__ << ": CHECK_EQ failed: " #a " == " #b    \
+                  << " (" << hnswhy_a << " vs " << hnswhy_b << ")";                               \
+            throw ::hnswhytest::Failure(hnswhy_os.str());                                         \
         }                                                                                 \
     } while (false)
 
 #define CHECK_NEAR(a, b, eps)                                                             \
     do {                                                                                  \
-        const double vf_a = static_cast<double>(a);                                       \
-        const double vf_b = static_cast<double>(b);                                       \
-        const double vf_eps = static_cast<double>(eps);                                   \
-        if (std::fabs(vf_a - vf_b) > vf_eps) {                                            \
-            std::ostringstream vf_os;                                                     \
-            vf_os << __FILE__ << ":" << __LINE__ << ": CHECK_NEAR failed: " #a " ~ " #b   \
-                  << " (" << vf_a << " vs " << vf_b << ", eps " << vf_eps << ")";         \
-            throw ::vftest::Failure(vf_os.str());                                         \
+        const double hnswhy_a = static_cast<double>(a);                                       \
+        const double hnswhy_b = static_cast<double>(b);                                       \
+        const double hnswhy_eps = static_cast<double>(eps);                                   \
+        if (std::fabs(hnswhy_a - hnswhy_b) > hnswhy_eps) {                                            \
+            std::ostringstream hnswhy_os;                                                     \
+            hnswhy_os << __FILE__ << ":" << __LINE__ << ": CHECK_NEAR failed: " #a " ~ " #b   \
+                  << " (" << hnswhy_a << " vs " << hnswhy_b << ", eps " << hnswhy_eps << ")";         \
+            throw ::hnswhytest::Failure(hnswhy_os.str());                                         \
         }                                                                                 \
     } while (false)
 
 #define CHECK_THROWS_AS(expr, type)                                                       \
     do {                                                                                  \
-        bool vf_caught = false;                                                           \
+        bool hnswhy_caught = false;                                                           \
+        std::string hnswhy_wrong;                                                             \
         try {                                                                             \
             (void)(expr);                                                                 \
         } catch (const type&) {                                                           \
-            vf_caught = true;                                                             \
+            hnswhy_caught = true;                                                             \
+        } catch (const std::exception& hnswhy_error) {                                        \
+            hnswhy_wrong = std::string(typeid(hnswhy_error).name()) + ": " + hnswhy_error.what();     \
         } catch (...) {                                                                   \
+            hnswhy_wrong = "unknown exception type";                                          \
         }                                                                                 \
-        if (!vf_caught) {                                                                 \
-            throw ::vftest::Failure(std::string(__FILE__) + ":" + std::to_string(__LINE__) + \
-                                    ": expected exception: " #expr);                      \
+        if (!hnswhy_caught) {                                                                 \
+            throw ::hnswhytest::Failure(std::string(__FILE__) + ":" + std::to_string(__LINE__) + \
+                                    ": expected exception " #type ": " #expr +             \
+                                    (hnswhy_wrong.empty() ? " (none thrown)"                  \
+                                                      : " (got " + hnswhy_wrong + ")"));      \
         }                                                                                 \
     } while (false)

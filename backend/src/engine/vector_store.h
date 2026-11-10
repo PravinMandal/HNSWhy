@@ -6,12 +6,22 @@
 
 #include "engine/types.h"
 
-namespace vf {
+namespace hnswhy {
 
 // Flat, owning vector storage. Slot IDs are indices into one contiguous float
 // buffer and never change for the lifetime of the store.
+//
+// A store must outlive any HNSW/BruteForce object that references it. Moving a
+// store resets the source to an empty state, so a stale graph fails with
+// std::out_of_range instead of reading freed memory.
 class VectorStore {
 public:
+    VectorStore() = default;
+    VectorStore(const VectorStore&) = default;
+    VectorStore& operator=(const VectorStore&) = default;
+    VectorStore(VectorStore&& other) noexcept;
+    VectorStore& operator=(VectorStore&& other) noexcept;
+
     void reserve(std::size_t n, std::size_t dim);
 
     // Appends one vector. The first add fixes the dimension if reserve() was
@@ -34,4 +44,4 @@ private:
     std::size_t size_ = 0;
 };
 
-}  // namespace vf
+}  // namespace hnswhy

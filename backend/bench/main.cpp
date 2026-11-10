@@ -159,7 +159,7 @@ std::uintmax_t file_size_or_zero(const std::filesystem::path& path) {
     return error ? 0 : size;
 }
 
-void print_method(const vf::MethodReport& method) {
+void print_method(const hnswhy::MethodReport& method) {
     std::cout << (method.name == "hnsw" ? "  ef=" + std::to_string(method.ef_search) + " "
                                         : "  exact  ")
               << "R@1=" << method.recall_at_1 << " R@10=" << method.recall_at_10
@@ -176,10 +176,10 @@ int main(int argc, char** argv) {
         const Options options = parse(argc, argv);
 
         std::cout << "[bench] loading base prefix\n";
-        const vf::VectorStore base = vf::load_fvecs_store(options.base, options.n);
-        const vf::FloatMatrix queries = vf::load_fvecs(options.queries);
-        const vf::IntMatrix gt_ids = vf::load_ivecs(options.gt_ids);
-        const vf::FloatMatrix gt_dist = vf::load_fvecs(options.gt_dist);
+        const hnswhy::VectorStore base = hnswhy::load_fvecs_store(options.base, options.n);
+        const hnswhy::FloatMatrix queries = hnswhy::load_fvecs(options.queries);
+        const hnswhy::IntMatrix gt_ids = hnswhy::load_ivecs(options.gt_ids);
+        const hnswhy::FloatMatrix gt_dist = hnswhy::load_fvecs(options.gt_dist);
 
         if (queries.n == 0 || gt_ids.n != queries.n || gt_dist.n != queries.n) {
             throw std::runtime_error("query count and ground-truth count do not match");
@@ -202,13 +202,13 @@ int main(int argc, char** argv) {
         std::cout << "[bench] base " << base.size() << " x " << base.dim() << ", queries "
                   << queries.n << " x " << queries.dim << ", gt " << gt_ids.dim << "\n";
 
-        vf::HNSWParams params;
+        hnswhy::HNSWParams params;
         params.M = options.M;
         params.M0 = options.M0;
         params.efConstruction = options.ef_construction;
         params.seed = options.seed;
 
-        vf::HNSW hnsw(base, params);
+        hnswhy::HNSW hnsw(base, params);
         const auto build_start = Clock::now();
         hnsw.build();
         const double build_ms = elapsed_ms(build_start);
@@ -216,7 +216,7 @@ int main(int argc, char** argv) {
         std::cout << "[bench] hnsw build " << build_ms << " ms, live " << hnsw.size()
                   << ", top level " << hnsw.topLevel() << "\n";
 
-        vf::BenchReport report;
+        hnswhy::BenchReport report;
         report.dataset.name = options.dataset_name;
         report.dataset.base_file = options.base.string();
         report.dataset.base_count = base.size();
@@ -242,7 +242,7 @@ int main(int argc, char** argv) {
 #endif
 
         report.build.build_time_ms = build_ms;
-        report.build.rss_after_build_mb = vf::current_rss_mb();
+        report.build.rss_after_build_mb = hnswhy::current_rss_mb();
 
         const std::size_t recall10_k = std::min<std::size_t>(10, options.k);
 
@@ -262,7 +262,7 @@ int main(int argc, char** argv) {
             for (std::size_t pass = 0; pass < options.passes; ++pass) {
                 for (std::size_t q = 0; q < queries.n; ++q) {
                     const auto start = Clock::now();
-                    const vf::SearchResult result = hnsw.search(queries.row(q), options.k, ef);
+                    const hnswhy::SearchResult result = hnsw.search(queries.row(q), options.k, ef);
                     const double ms = elapsed_ms(start);
                     if (result.ids.size() != options.k) {
                         throw std::runtime_error("HNSW returned fewer than k results");
@@ -270,21 +270,21 @@ int main(int argc, char** argv) {
                     latencies.push_back(ms);
                     total_ms += ms;
                     distance_sum += result.stats.distance_computations;
-                    recall1_sum += vf::tie_aware_recall_at_k(result.distances, gt_dist.row(q), 1);
+                    recall1_sum += hnswhy::tie_aware_recall_at_k(result.distances, gt_dist.row(q), 1);
                     recall10_sum +=
-                        vf::tie_aware_recall_at_k(result.distances, gt_dist.row(q), recall10_k);
+                        hnswhy::tie_aware_recall_at_k(result.distances, gt_dist.row(q), recall10_k);
                     ++measured;
                 }
             }
 
-            vf::MethodReport method;
+            hnswhy::MethodReport method;
             method.name = "hnsw";
             method.ef_search = ef;
             method.queries_measured = measured;
             method.recall_at_1 = recall1_sum / static_cast<double>(measured);
             method.recall_at_10 = recall10_sum / static_cast<double>(measured);
             method.qps = total_ms > 0.0 ? static_cast<double>(measured) / (total_ms / 1000.0) : 0.0;
-            method.latency_ms = vf::summarize_latency(std::move(latencies));
+            method.latency_ms = hnswhy::summarize_latency(std::move(latencies));
             method.avg_distance_computations =
                 static_cast<double>(distance_sum) / static_cast<double>(measured);
             report.methods.push_back(method);
@@ -293,7 +293,7 @@ int main(int argc, char** argv) {
 
         if (options.run_bruteforce) {
             std::cout << "[bench] exact baseline\n";
-            const vf::BruteForce brute_force(base);
+            const hnswhy::BruteForce brute_force(base);
             for (std::size_t w = 0; w < std::min<std::size_t>(options.warmup, 20); ++w) {
                 (void)brute_force.search(queries.row(w), options.k);
             }
@@ -309,7 +309,7 @@ int main(int argc, char** argv) {
             const auto exact_start = Clock::now();
             for (std::size_t q = 0; q < queries.n; ++q) {
                 const auto start = Clock::now();
-                const vf::SearchResult result = brute_force.search(queries.row(q), options.k);
+                const hnswhy::SearchResult result = brute_force.search(queries.row(q), options.k);
                 const double ms = elapsed_ms(start);
                 if (result.ids.size() != options.k) {
                     throw std::runtime_error("brute force returned fewer than k results");
@@ -317,9 +317,9 @@ int main(int argc, char** argv) {
                 latencies.push_back(ms);
                 total_ms += ms;
                 distance_sum += result.stats.distance_computations;
-                recall1_sum += vf::tie_aware_recall_at_k(result.distances, gt_dist.row(q), 1);
+                recall1_sum += hnswhy::tie_aware_recall_at_k(result.distances, gt_dist.row(q), 1);
                 recall10_sum +=
-                    vf::tie_aware_recall_at_k(result.distances, gt_dist.row(q), recall10_k);
+                    hnswhy::tie_aware_recall_at_k(result.distances, gt_dist.row(q), recall10_k);
                 for (std::size_t i = 0; i < options.k; ++i) {
                     max_gt_distance_error =
                         std::max(max_gt_distance_error,
@@ -336,7 +336,7 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("exact search disagrees with the ground-truth distances");
             }
 
-            vf::MethodReport method;
+            hnswhy::MethodReport method;
             method.name = "bruteforce";
             method.queries_measured = queries.n;
             method.recall_at_1 = recall1_sum / static_cast<double>(queries.n);
@@ -344,15 +344,15 @@ int main(int argc, char** argv) {
             method.qps = total_ms > 0.0
                              ? static_cast<double>(queries.n) / (total_ms / 1000.0)
                              : 0.0;
-            method.latency_ms = vf::summarize_latency(std::move(latencies));
+            method.latency_ms = hnswhy::summarize_latency(std::move(latencies));
             method.avg_distance_computations =
                 static_cast<double>(distance_sum) / static_cast<double>(queries.n);
             report.methods.push_back(method);
             print_method(method);
         }
 
-        report.build.peak_rss_mb = vf::peak_rss_mb();
-        vf::write_bench_json(options.output, report);
+        report.build.peak_rss_mb = hnswhy::peak_rss_mb();
+        hnswhy::write_bench_json(options.output, report);
         std::cout << "[bench] wrote " << options.output << "\n";
         return 0;
     } catch (const std::exception& error) {
