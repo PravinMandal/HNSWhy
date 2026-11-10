@@ -1,8 +1,13 @@
 {
   "build": {
-    "build_time_ms": 38595.003966,
-    "peak_rss_mb": 92.75390625,
-    "rss_after_build_mb": 88.359375
+    "build_time_ms": 34002.590656,
+    "peak_rss_mb": 92.625,
+    "rss_after_build_mb": 88.40234375
+  },
+  "checks": {
+    "exact_checked": true,
+    "exact_max_distance_error": 0.0,
+    "exact_tolerance": 0.0001
   },
   "config": {
     "M": 16,
@@ -41,19 +46,21 @@
     "hostname": "pravinmandal",
     "os": "Linux 7.2.11-arch1-1"
   },
-  "generated_at_utc": "2026-11-10T21:19:21Z",
+  "generated_at_utc": "2026-11-10T23:31:13Z",
   "methods": [
     {
       "avg_distance_computations": 322.3267,
       "ef_search": 10,
       "latency_ms": {
-        "mean": 0.04896506796666656,
-        "p50": 0.047826,
-        "p95": 0.068886,
-        "p99": 0.081582
+        "max": 0.1859,
+        "mean": 0.04547563673333337,
+        "min": 0.010651,
+        "p50": 0.044898,
+        "p95": 0.062808,
+        "p99": 0.07243
       },
       "name": "hnsw",
-      "qps": 20422.722596459163,
+      "qps": 21989.796555547862,
       "queries_measured": 30000,
       "recall_at_1": 0.8779,
       "recall_at_10": 0.7989000000000284
@@ -62,13 +69,15 @@
       "avg_distance_computations": 470.6266,
       "ef_search": 20,
       "latency_ms": {
-        "mean": 0.07511710913333319,
-        "p50": 0.074404,
-        "p95": 0.101869,
-        "p99": 0.128853
+        "max": 0.228626,
+        "mean": 0.07333991093333295,
+        "min": 0.014193,
+        "p50": 0.072774,
+        "p95": 0.100092,
+        "p99": 0.124227
       },
       "name": "hnsw",
-      "qps": 13312.546389731207,
+      "qps": 13635.140638621919,
       "queries_measured": 30000,
       "recall_at_1": 0.9558,
       "recall_at_10": 0.9123300000000666
@@ -77,13 +86,15 @@
       "avg_distance_computations": 872.3549,
       "ef_search": 50,
       "latency_ms": {
-        "mean": 0.1668665448333347,
-        "p50": 0.167022,
-        "p95": 0.229737,
-        "p99": 0.277039
+        "max": 0.299282,
+        "mean": 0.13974850423333438,
+        "min": 0.028589,
+        "p50": 0.143333,
+        "p95": 0.177365,
+        "p99": 0.192574
       },
       "name": "hnsw",
-      "qps": 5992.8130051400885,
+      "qps": 7155.711651341374,
       "queries_measured": 30000,
       "recall_at_1": 0.9927,
       "recall_at_10": 0.9836300000000453
@@ -92,13 +103,15 @@
       "avg_distance_computations": 1453.8663,
       "ef_search": 100,
       "latency_ms": {
-        "mean": 0.2810092053333335,
-        "p50": 0.28523,
-        "p95": 0.381527,
-        "p99": 0.426303
+        "max": 0.522885,
+        "mean": 0.24106844400000152,
+        "min": 0.052449,
+        "p50": 0.248303,
+        "p95": 0.30861,
+        "p99": 0.336745
       },
       "name": "hnsw",
-      "qps": 3558.6022842696507,
+      "qps": 4148.199504701634,
       "queries_measured": 30000,
       "recall_at_1": 0.9985,
       "recall_at_10": 0.996620000000013
@@ -107,13 +120,15 @@
       "avg_distance_computations": 2426.7249,
       "ef_search": 200,
       "latency_ms": {
-        "mean": 0.4486272969999994,
-        "p50": 0.458402,
-        "p95": 0.60125,
-        "p99": 0.674641
+        "max": 2.241265,
+        "mean": 0.41836679393333265,
+        "min": 0.095806,
+        "p50": 0.429253,
+        "p95": 0.545817,
+        "p99": 0.609498
       },
       "name": "hnsw",
-      "qps": 2229.021744078139,
+      "qps": 2390.2470619103474,
       "queries_measured": 30000,
       "recall_at_1": 0.9998,
       "recall_at_10": 0.9995600000000021
@@ -121,13 +136,15 @@
     {
       "avg_distance_computations": 100000.0,
       "latency_ms": {
-        "mean": 5.169657225799969,
-        "p50": 5.112462,
-        "p95": 5.435787,
-        "p99": 6.244371
+        "max": 10.444476,
+        "mean": 4.940478111300005,
+        "min": 4.602806,
+        "p50": 4.869348,
+        "p95": 5.270409,
+        "p99": 5.861427
       },
       "name": "bruteforce",
-      "qps": 193.43642263346712,
+      "qps": 202.4095598587454,
       "queries_measured": 10000,
       "recall_at_1": 1.0,
       "recall_at_10": 1.0
@@ -137,11 +154,11 @@
     "base_prefix": 100000,
     "base_sha256": "21f66e2975057b5728ba56de1c825bac4f4d89d596609ae985741c6242631816",
     "cxx_flags_release": "-O3 -DNDEBUG",
-    "git_commit": "a71674ee971b2b78e584deb17a01d2d5af42cd1e",
+    "git_commit": "52f81451fc008f036977f69c01225c9c7a25c25f",
     "ground_truth_distances_sha256": "7db2048e07d94c6a705099f645b8294342c285e0cc733f8192c2dfc647e10476",
     "ground_truth_ids_sha256": "e6779be7593f8751855b98be2579ef76cd8cef7f03edcb87122d8e357caed9c2",
     "queries_sha256": "f7fc9be140accdfd64116c2fa2365ecdb69b8f084970c6b0532db5ff79ac8fdc",
-    "run_id": "20261110T211719Z-a71674e",
+    "run_id": "20261110T232921Z-52f8145",
     "worktree_dirty": true
   },
   "schema_version": 1

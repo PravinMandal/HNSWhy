@@ -64,9 +64,9 @@ if ! curl -sf "$BASE/api/health" >/dev/null 2>&1; then
 fi
 
 echo "[e2e] API checks"
-BASE="$BASE" OUT="$OUT" scripts/e2e/api-e2e.sh
+BASE="$BASE" OUT="$OUT" scripts/e2e/api-e2e.sh | tee "$OUT/api-e2e.log"
 
 echo "[e2e] browser checks"
-BASE="$BASE" OUT="$OUT" node scripts/e2e/ui-e2e.cjs
+BASE="$BASE" OUT="$OUT" node scripts/e2e/ui-e2e.cjs | tee "$OUT/ui-e2e.log"
 
 echo "[e2e] artifacts: $OUT"

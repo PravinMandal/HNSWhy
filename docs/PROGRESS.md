@@ -58,7 +58,8 @@
 ## Test and verification state
 
 - Release suite: **143/143 passed** with `HNSWHY_SIFTSMALL_DIR` set.
-- ASan/UBSan suite: rerun after the final hardening pass; no sanitizer reports.
+- ASan/UBSan suite: **143/143 passed** after the final hardening pass; no
+  sanitizer reports.
 - Frontend: `tsc --noEmit` clean; **55/55 Vitest tests in 15 files passed**;
   `npm run build` succeeds.
 - API end-to-end: **25/25 checks passed** against a fresh database and the real
