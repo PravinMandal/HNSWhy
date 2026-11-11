@@ -1,0 +1,42 @@
+# Build output and local tooling
+build/
+cmake-build-*/
+compile_commands.json
+*.o
+*.a
+*.so
+*.dylib
+
+# Datasets and local databases (the sift10k test fixture is committed)
+data/
+sift/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.fvecs
+*.ivecs
+!tests/fixtures/**/*.fvecs
+!tests/fixtures/**/*.ivecs
+*.tar.gz
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and editor/OS noise
+*.log
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/

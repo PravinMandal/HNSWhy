@@ -395,7 +395,8 @@ A measured 100k row is more impressive than a borrowed 1M story.
 **Consequences.**
 
 - `hns_bench` writes `bench.json`; the README table and Benchmark tab read it.
-- The README table stays `TBD` until the v1 release run.
+- The README table stayed `TBD` until the v1 release run; it now carries the
+  measured values from `docs/results/bench.json`.
 - The UI shows the command and the run metadata, not just a pretty curve.
 - If a number is not in `bench.json`, it does not go on a slide.
 
@@ -941,7 +942,7 @@ without a fabricated regression test.
 
 1. Before adding a feature, check D20. If it is on the cut list, stop.
 2. If a choice changes, edit the decision here first, then update
-   `ARCHITECTURE.md`, `HNSW-SPEC.md`, `plan.md`, `START-HERE.md`, and `SHOWCASE.md`.
+   `ARCHITECTURE.md`, `HNSW-SPEC.md`, `plan.md`, and `START-HERE.md`.
 3. If two docs disagree, this file wins.
 4. If a number appears in a doc without a `run_id`, it is illustrative; replace it
    with a measured value or delete it.

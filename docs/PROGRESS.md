@@ -1,8 +1,8 @@
 # HNSWhy — Implementation Progress
 
 > Persistent state for resuming work. Updated at the end of every phase.
-> Vision: `docs/goal.md`. Decisions: `docs/DECISIONS.md`. Architecture reference:
-> `docs/ARCHITECTURE.md`.
+> On-ramp: `docs/START-HERE.md`. Decisions: `docs/DECISIONS.md`. Architecture
+> reference: `docs/ARCHITECTURE.md`.
 
 ## Status
 
@@ -97,7 +97,7 @@
 
 ### Phase 0 — skeleton
 Created empty backend file inventory; no code. Removed twice by request, final
-inventory approved in `docs/goal.md` flow.
+inventory approved in the initial project brief.
 
 ### Phase 1 — build + engine core (done)
 CMake presets (`dev` with ASan/UBSan, `release`, `release-native`, `ci`),

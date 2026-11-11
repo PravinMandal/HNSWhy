@@ -260,7 +260,7 @@ exact error. Do not grind. **Never continue past a failed gate.**
 4. **`HNSW-SPEC.md`** — read §1–§6 before writing the graph; §7–§8 before the prune
    and delete. Not day one.
 5. **`plan.md`** — the deep product/algorithm/measurement reference.
-6. **`SHOWCASE.md`** — the product UI, demo script, and what not to build.
+6. **`results/README.md`** — the frozen benchmark artifact and its provenance.
 
 If two docs disagree, `DECISIONS.md` wins. If a number appears in a doc without a
 `run_id`, it is illustrative; replace it with a measured value or delete it.

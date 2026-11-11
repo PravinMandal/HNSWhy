@@ -1,5 +1,8 @@
 # HNSWhy
 
+[![CI](https://github.com/PravinMandal/HNSWhy/actions/workflows/ci.yml/badge.svg)](https://github.com/PravinMandal/HNSWhy/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A retrieval-augmented question answering app backed by a from-scratch C++20 HNSW
 vector engine.
 
@@ -34,6 +37,17 @@ The query is embedded with the same provider as the corpus. The retrieved chunks
 loaded from SQLite, passed to the chat provider as numbered sources, and returned with
 citations. A separate CLI measures the same engine library, so product latency and
 benchmark claims cannot drift apart.
+
+---
+
+## Demo
+
+| Ask with citations | 2D embedding map |
+|---|---|
+| ![Ask tab showing a cited answer and retrieved chunks](docs/results/e2e/ask-answer.png) | ![2D PCA projection of the sample corpus](docs/results/e2e/map-2d.png) |
+
+The screenshots come from the automated browser suite against the production
+build. More evidence is in [`docs/results/e2e/`](docs/results/e2e/).
 
 ---
 
@@ -313,9 +327,12 @@ benchmark during a request.
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | components, data model, API, persistence, memory, tests |
 | [`docs/HNSW-SPEC.md`](docs/HNSW-SPEC.md) | the algorithm contract, directed graph, prune example, tombstones |
 | [`docs/plan.md`](docs/plan.md) | the deep product/algorithm/measurement reference |
-| [`docs/SHOWCASE.md`](docs/SHOWCASE.md) | the four product tabs, demo script, and non-goals |
 | [`docs/PROGRESS.md`](docs/PROGRESS.md) | persistent implementation state and phase log |
 | [`docs/results/README.md`](docs/results/README.md) | the frozen `bench.json` release artifact and how it is produced |
+| [`docs/results/tests/`](docs/results/tests/) | raw release, sanitizer, CI, frontend, and E2E evidence |
+| [`docs/reviews/final-iteration-2026-11-11.md`](docs/reviews/final-iteration-2026-11-11.md) | five-critic review, findings, and fix verification |
+| [`SECURITY.md`](SECURITY.md) | local threat model and vulnerability reporting |
+| [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) | vendored library licenses |
 
 If two docs disagree, `DECISIONS.md` wins. If a number appears in a doc without a
 `bench.json` entry, it is stale; replace it or delete it.
@@ -324,4 +341,4 @@ If two docs disagree, `DECISIONS.md` wins. If a number appears in a doc without 
 
 ## License
 
-TBD.
+MIT. See [`LICENSE`](LICENSE).
