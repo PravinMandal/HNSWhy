@@ -59,6 +59,15 @@ export function Plot2D({
   // Making all 1,200 circles tabbable would bury every other control on the page.
   const [focusIndex, setFocusIndex] = useState(0)
 
+  // A refresh can return fewer points; the old index would then match no
+  // element and every point would become tabIndex={-1}, removing the plot's
+  // only keyboard entry point. Clamp it whenever the point list changes.
+  useEffect(() => {
+    setFocusIndex((current) =>
+      points.length === 0 ? 0 : Math.min(current, points.length - 1),
+    )
+  }, [points])
+
   useEffect(() => {
     const svg = svgRef.current
     if (!svg) {

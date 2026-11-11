@@ -489,6 +489,16 @@ std::optional<DocumentDetail> DocumentStore::get_document(Id document_id) const 
     return detail;
 }
 
+bool DocumentStore::document_exists(const std::string& title,
+                                    const std::string& source) const {
+    constexpr std::string_view sql =
+        "SELECT 1 FROM documents WHERE title = ? AND source = ? LIMIT 1";
+    Statement statement(db_, sql);
+    statement.bind_text(1, title);
+    statement.bind_text(2, source);
+    return statement.step();
+}
+
 std::vector<Id> DocumentStore::chunk_ids_for_document(Id document_id) const {
     Statement statement(db_, "SELECT id FROM chunks WHERE document_id = ? ORDER BY ordinal");
     statement.bind_int64(1, document_id);

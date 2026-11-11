@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -36,19 +37,52 @@ interface StoredAnswer {
   question: string
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function isAskSource(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isFiniteNumber(value.chunk_id) &&
+    isFiniteNumber(value.document_id) &&
+    typeof value.title === 'string' &&
+    isFiniteNumber(value.ordinal) &&
+    typeof value.text === 'string' &&
+    isFiniteNumber(value.distance)
+  )
+}
+
+// AskPage renders these fields directly (`source.distance.toFixed(2)`,
+// `timings_ms.total`), so a stored answer with missing or malformed nested
+// fields would crash the whole app rather than show a recoverable error.
 function isAskResponse(value: unknown): value is AskResponse {
-  if (!value || typeof value !== 'object') {
+  if (!isRecord(value)) {
     return false
   }
   const candidate = value as Partial<AskResponse>
+  const timings = candidate.timings_ms
+  const models = candidate.models
   return (
     typeof candidate.answer === 'string' &&
     Array.isArray(candidate.sources) &&
+    candidate.sources.every(isAskSource) &&
     Array.isArray(candidate.query_vector) &&
-    typeof candidate.timings_ms === 'object' &&
-    candidate.timings_ms !== null &&
-    typeof candidate.models === 'object' &&
-    candidate.models !== null
+    candidate.query_vector.every(isFiniteNumber) &&
+    isRecord(timings) &&
+    isFiniteNumber(timings.embedding) &&
+    isFiniteNumber(timings.search) &&
+    isFiniteNumber(timings.generate) &&
+    isFiniteNumber(timings.total) &&
+    isRecord(models) &&
+    typeof models.embedding_provider === 'string' &&
+    typeof models.embedding_model === 'string' &&
+    typeof models.chat_provider === 'string' &&
+    typeof models.chat_model === 'string'
   )
 }
 
@@ -88,8 +122,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [storedAnswer, setStoredAnswer] = useState<StoredAnswer | null>(readStoredAnswer)
+  // Only the newest refresh may publish state. A slow pre-upload refresh must
+  // not land after the post-upload one and restore a stale document list.
+  const refreshRequest = useRef(0)
 
   const refreshAll = useCallback(async (): Promise<boolean> => {
+    const request = refreshRequest.current + 1
+    refreshRequest.current = request
     setRefreshing(true)
     const [statusResult, healthResult, documentsResult] = await Promise.allSettled([
       api.status(),
@@ -99,24 +138,32 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     let failure: unknown = null
     if (statusResult.status === 'fulfilled') {
-      setStatus(statusResult.value)
+      if (request === refreshRequest.current) {
+        setStatus(statusResult.value)
+      }
     } else {
       failure = statusResult.reason
     }
     if (healthResult.status === 'fulfilled') {
-      setHealth(healthResult.value)
+      if (request === refreshRequest.current) {
+        setHealth(healthResult.value)
+      }
     } else {
       failure ??= healthResult.reason
     }
     if (documentsResult.status === 'fulfilled') {
-      setDocuments(documentsResult.value)
+      if (request === refreshRequest.current) {
+        setDocuments(documentsResult.value)
+      }
     } else {
       failure ??= documentsResult.reason
     }
 
-    setError(failure === null ? null : describeFailure(failure))
-    setLoading(false)
-    setRefreshing(false)
+    if (request === refreshRequest.current) {
+      setError(failure === null ? null : describeFailure(failure))
+      setLoading(false)
+      setRefreshing(false)
+    }
     return failure === null
   }, [])
 

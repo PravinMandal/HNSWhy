@@ -125,9 +125,15 @@ std::string truncate_utf8_words(std::string_view text, std::size_t max_bytes) {
     if (text.size() <= max_bytes) {
         return std::string(text);
     }
-    std::string prefix = truncate_utf8(text, max_bytes);
+    constexpr std::size_t marker_bytes = 3;  // the "..." suffix
+    if (max_bytes <= marker_bytes) {
+        // There is no room for the marker; still honor the byte cap.
+        return truncate_utf8(text, max_bytes);
+    }
+    const std::size_t limit = max_bytes - marker_bytes;
+    std::string prefix = truncate_utf8(text, limit);
     const std::size_t space = prefix.rfind(' ');
-    if (space != std::string::npos && space >= max_bytes / 2) {
+    if (space != std::string::npos && space >= limit / 2) {
         prefix.resize(space);
     }
     while (!prefix.empty() &&

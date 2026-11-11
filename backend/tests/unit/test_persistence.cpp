@@ -182,11 +182,29 @@ HNSWHY_TEST(application_validates_uploads_and_lookups) {
     CHECK_THROWS_AS(app.add_document("", "empty.txt", ""), hnswhy::ProductError);
     CHECK_THROWS_AS(app.add_document(std::string(201, 'a'), "source.txt", "text"),
                     hnswhy::ProductError);
+    // NUL is valid UTF-8 but SQLite length()/substr() truncate at it, so the
+    // upload boundary rejects it like any other binary payload.
+    CHECK_THROWS_AS(app.add_document("NUL", "nul.txt", std::string("a\0b", 3)),
+                    hnswhy::ProductError);
     CHECK_THROWS_AS(app.map(0), hnswhy::ProductError);
     CHECK_THROWS_AS(app.map(2001), hnswhy::ProductError);
     CHECK(!app.delete_document(999));
     CHECK(!app.get_document(999).has_value());
     CHECK(app.list_documents().empty());
+}
+
+HNSWHY_TEST(application_answers_from_an_empty_library_without_a_provider_call) {
+    TempPath db(".db");
+    TempDir dir;
+    hnswhy::Application app(test_config(db, dir));
+
+    const hnswhy::RagAnswer answer = app.ask("What is HNSW?", 3);
+    CHECK_EQ(answer.answer, std::string(hnswhy::kNoAnswer));
+    CHECK(answer.sources.empty());
+    CHECK(answer.query_vector.empty());
+    CHECK_EQ(answer.timings.total_ms, 0.0);
+    CHECK_EQ(answer.embedding_provider, std::string("hash"));
+    CHECK_EQ(answer.chat_provider, std::string("extractive"));
 }
 
 HNSWHY_TEST(application_survives_restart_and_rebuilds_index) {
@@ -313,6 +331,53 @@ HNSWHY_TEST(application_seeds_samples_once_on_a_fresh_database) {
     CHECK(reopened.status().sample_loaded);
 }
 
+HNSWHY_TEST(application_finishes_an_interrupted_sample_seed) {
+    TempPath db(".db");
+    TempDir dir;
+    const std::filesystem::path samples = dir.path() / "samples";
+    std::filesystem::create_directories(samples);
+    {
+        std::ofstream file(samples / "engine.md");
+        file << "# Engine guide\n\n" << kDocumentText << '\n';
+    }
+    {
+        std::ofstream file(samples / "rag.txt");
+        file << "Retrieval augmented generation combines search with a language model.\n"
+             << "The retriever finds relevant chunks and the model answers with citations.\n";
+    }
+
+    hnswhy::AppConfig config = test_config(db, dir);
+    config.load_sample = true;
+    {
+        hnswhy::Application app(config);
+        CHECK_EQ(app.list_documents().size(), std::size_t{2});
+    }
+
+    // Simulate a crash after the first sample committed: one document is
+    // present, the completion markers are absent, and the in-progress marker
+    // remains. The next start must add the missing file, skip the existing one,
+    // and mark the library complete.
+    exec_sql(db, "DELETE FROM documents WHERE title = 'rag'");
+    exec_sql(db,
+             "DELETE FROM meta WHERE key IN ('app_initialized', 'sample_loaded')");
+
+    {
+        hnswhy::Application resumed(config);
+        CHECK_EQ(resumed.list_documents().size(), std::size_t{2});
+        CHECK(resumed.status().sample_loaded);
+    }
+
+    // Losing the completion markers after every file was inserted must not
+    // duplicate the documents either.
+    exec_sql(db,
+             "DELETE FROM meta WHERE key IN ('app_initialized', 'sample_loaded')");
+    {
+        hnswhy::Application reopened(config);
+        CHECK_EQ(reopened.list_documents().size(), std::size_t{2});
+        CHECK(reopened.status().sample_loaded);
+    }
+}
+
 HNSWHY_TEST(application_serves_a_benchmark_only_when_the_report_exists) {
     TempPath db(".db");
     TempDir dir;
@@ -323,7 +388,8 @@ HNSWHY_TEST(application_serves_a_benchmark_only_when_the_report_exists) {
     // instance closes. Two live instances on one file would diverge.
     {
         hnswhy::Application app(config);
-        CHECK(!app.benchmark_json().has_value());
+        CHECK(!app.benchmark_json().contents.has_value());
+        CHECK(app.benchmark_json().error.empty());
         CHECK(!app.status().benchmark_available);
 
         {
@@ -331,12 +397,21 @@ HNSWHY_TEST(application_serves_a_benchmark_only_when_the_report_exists) {
             report << R"({"schema_version":1,"dataset":{"name":"sift100k"}})";
         }
         const auto report = app.benchmark_json();
-        CHECK(report.has_value());
-        CHECK(report->find("sift100k") != std::string::npos);
+        CHECK(report.error.empty());
+        CHECK(report.contents.has_value());
+        CHECK(report.contents->find("sift100k") != std::string::npos);
         CHECK(app.status().benchmark_available);
+
+        {
+            std::ofstream empty_report(config.bench_report, std::ios::trunc);
+        }
+        const auto empty = app.benchmark_json();
+        CHECK(!empty.contents.has_value());
+        CHECK(!empty.error.empty());
     }
 
     config.bench_report = dir.path() / "missing.json";
     hnswhy::Application missing(config);
-    CHECK(!missing.benchmark_json().has_value());
+    CHECK(!missing.benchmark_json().contents.has_value());
+    CHECK(missing.benchmark_json().error.empty());
 }

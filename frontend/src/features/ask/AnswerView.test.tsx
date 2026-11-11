@@ -86,12 +86,15 @@ describe('AnswerView', () => {
   it('does not turn index expressions inside code into citations', () => {
     const { container } = renderAnswer({
       ...baseAnswer,
-      answer: 'Inline `values[1]` stays code, and so does:\n\n```\narray[1] = 2\n```\n\nBut source [1] is a real citation.',
+      answer:
+        'Inline `values[1]` stays code, and so do:\n\n```\narray[1] = 2\n```\n\n' +
+        '~~~\nother[1] = 3\n~~~\n\nBut source [1] is a real citation.',
     })
 
     expect(container.querySelectorAll('code')[0]).toHaveTextContent('values[1]')
     expect(container.querySelectorAll('pre code')[0]).toHaveTextContent('array[1] = 2')
     expect(screen.getAllByRole('button', { name: /Jump to source/ })).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Answer with citations' })).toBeInTheDocument()
   })
 
   it('does not render raw HTML or unsafe links from a model answer', () => {

@@ -64,6 +64,14 @@ struct MapView {
     std::vector<MapPoint> points;
 };
 
+// The benchmark report is optional. Distinguish "no report yet" (both fields
+// empty) from "a report exists but cannot be served" (error set) so the API can
+// tell the operator what to fix instead of always saying "run the benchmark".
+struct BenchmarkFile {
+    std::optional<std::string> contents;
+    std::string error;
+};
+
 class Application {
 public:
     explicit Application(AppConfig config);
@@ -84,7 +92,7 @@ public:
     MapView map(std::size_t limit);
     StatusView status();
     HealthView health();
-    std::optional<std::string> benchmark_json() const;
+    BenchmarkFile benchmark_json() const;
 
     const AppConfig& config() const noexcept { return config_; }
 

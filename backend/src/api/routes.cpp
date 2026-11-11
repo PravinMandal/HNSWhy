@@ -338,8 +338,11 @@ void register_routes(httplib::Server& server, Application& app) {
     server.Get("/api/benchmark", [&app](const httplib::Request&,
                                         httplib::Response& response) {
         guarded(response, [&] {
-            const auto benchmark = app.benchmark_json();
-            if (!benchmark.has_value()) {
+            const BenchmarkFile benchmark = app.benchmark_json();
+            if (!benchmark.error.empty()) {
+                throw ProductError("BENCHMARK_UNAVAILABLE", benchmark.error, 500);
+            }
+            if (!benchmark.contents.has_value()) {
                 send_json(response, 200,
                           json{{"available", false},
                                {"message",
@@ -349,7 +352,7 @@ void register_routes(httplib::Server& server, Application& app) {
             }
             try {
                 send_json(response, 200,
-                          json{{"available", true}, {"report", json::parse(*benchmark)}});
+                          json{{"available", true}, {"report", json::parse(*benchmark.contents)}});
             } catch (const std::exception&) {
                 throw ProductError("BENCHMARK_INVALID",
                                    "docs/results/bench.json is not valid JSON", 500);

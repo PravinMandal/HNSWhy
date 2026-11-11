@@ -157,7 +157,17 @@ export function QueryCard({
               {pluralize(hitCount, 'plotted chunk')}.
             </p>
           ) : null}
-          <button type="button" className="query-card__toggle" onClick={onToggleQuery}>
+          <button
+            type="button"
+            className="query-card__toggle"
+            onClick={onToggleQuery}
+            disabled={!queryPlotted}
+            title={
+              queryPlotted
+                ? undefined
+                : 'The saved query embedding does not match this map dimension'
+            }
+          >
             {showQuery ? 'Hide retrieval overlay' : 'Show retrieval overlay'}
           </button>
         </>

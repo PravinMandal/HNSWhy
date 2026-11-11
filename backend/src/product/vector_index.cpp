@@ -36,12 +36,12 @@ std::size_t common_dimension(const std::vector<IndexedVector>& vectors) {
 VectorIndex::VectorIndex(HNSWParams params) : params_(params) {}
 
 void VectorIndex::rebuild(const std::vector<IndexedVector>& vectors) {
-    ++rebuild_count_;
     if (vectors.empty()) {
         hnsw_.reset();
         store_.reset();
         slot_to_chunk_.clear();
         chunk_to_slot_.clear();
+        ++rebuild_count_;
         return;
     }
 
@@ -67,6 +67,7 @@ void VectorIndex::rebuild(const std::vector<IndexedVector>& vectors) {
     hnsw_ = std::move(graph);
     slot_to_chunk_ = std::move(slot_to_chunk);
     chunk_to_slot_ = std::move(chunk_to_slot);
+    ++rebuild_count_;
 }
 
 void VectorIndex::add(const std::vector<IndexedVector>& vectors) {

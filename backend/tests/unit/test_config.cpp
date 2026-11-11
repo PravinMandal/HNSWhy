@@ -81,6 +81,17 @@ HNSWHY_TEST(config_keeps_explicit_m0) {
     CHECK_EQ(config.hnsw.M0, std::size_t{96});
 }
 
+HNSWHY_TEST(config_does_not_mistake_an_option_value_for_a_flag) {
+    const ScopedCleanEnvironment environment;
+    // "--M0" is the value of --embedding-model, not a flag. M0 must still be
+    // derived from M instead of being treated as explicitly set.
+    const hnswhy::AppConfig config =
+        load_with({"--M", "64", "--embedding-model", "--M0"});
+    CHECK_EQ(config.embedding.model, std::string("--M0"));
+    CHECK_EQ(config.hnsw.M, std::size_t{64});
+    CHECK_EQ(config.hnsw.M0, std::size_t{128});
+}
+
 HNSWHY_TEST(config_rejects_m0_smaller_than_m) {
     const ScopedCleanEnvironment environment;
     CHECK_THROWS_AS(load_with({"--M", "32", "--M0", "16"}), hnswhy::ProductError);

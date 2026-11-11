@@ -101,6 +101,8 @@ check "ask rejects invalid JSON with 400" bash -c \
     '[[ "$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "{not json" "$1/api/ask")" == "400" ]]' _ "$BASE"
 check "upload rejects unsupported file type" bash -c \
     '[[ "$(curl -s -o /dev/null -w "%{http_code}" -F "file=@/etc/hostname;filename=bad.exe" "$1/api/documents")" == "415" ]]' _ "$BASE"
+check "upload rejects NUL bytes with 422" bash -c \
+    '[[ "$(curl -s -o /dev/null -w "%{http_code}" -H "Content-Type: application/json" -d "{\"title\":\"NUL\",\"text\":\"a\\u0000b\"}" "$1/api/documents")" == "422" ]]' _ "$BASE"
 check "map rejects an invalid limit" status_is '/api/map?limit=0' 400
 check "missing document is 404" status_is '/api/documents/999999' 404
 

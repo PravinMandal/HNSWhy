@@ -102,6 +102,9 @@ struct StoreStats {
 //
 // A DocumentStore is not internally synchronized. The application serializes
 // calls with its own mutex and SQLite runs in serialized (FULLMUTEX) mode.
+// Application::health() is the deliberate exception: its read-only stats call
+// must stay responsive while an upload holds that mutex, and FULLMUTEX makes
+// the concurrent call safe. Those transient counts are used for liveness only.
 class DocumentStore {
 public:
     explicit DocumentStore(const std::filesystem::path& path);
@@ -118,6 +121,9 @@ public:
 
     std::vector<DocumentSummary> list_documents() const;
     std::optional<DocumentDetail> get_document(Id document_id) const;
+    // Sample seeding retries across restarts and must not duplicate a document
+    // that was committed before a crash.
+    bool document_exists(const std::string& title, const std::string& source) const;
     std::vector<Id> chunk_ids_for_document(Id document_id) const;
     bool delete_document(Id document_id);
 

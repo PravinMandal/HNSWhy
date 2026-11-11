@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api/client'
 import type { DocumentSummary, HealthResponse, StatusResponse } from '../api/types'
@@ -43,12 +43,13 @@ const documents: DocumentSummary[] = [
 ]
 
 function Probe() {
-  const { documents: items, loading, error, refreshAll } = useData()
+  const { documents: items, loading, error, refreshAll, lastAnswer } = useData()
   return (
     <div>
       <span data-testid="loading">{String(loading)}</span>
       <span data-testid="error">{error ?? ''}</span>
       <span data-testid="documents">{items.map((item) => item.title).join(',')}</span>
+      <span data-testid="last-answer">{lastAnswer ? 'present' : 'none'}</span>
       <button type="button" onClick={() => void refreshAll()}>
         Retry
       </button>
@@ -58,6 +59,7 @@ function Probe() {
 
 describe('DataProvider', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     vi.mocked(api.status).mockResolvedValue(status)
     vi.mocked(api.health).mockResolvedValue(health)
     vi.mocked(api.documents).mockResolvedValue(documents)
@@ -91,5 +93,55 @@ describe('DataProvider', () => {
 
     await waitFor(() => expect(screen.getByTestId('documents')).toHaveTextContent('HNSW notes'))
     expect(screen.getByTestId('error')).toHaveTextContent('')
+  })
+
+  it('drops a stored answer whose nested fields are malformed', async () => {
+    sessionStorage.setItem(
+      'hnswhy-last-answer',
+      JSON.stringify({
+        question: 'Broken answer',
+        answer: {
+          answer: 'Answer text',
+          sources: [{}],
+          query_vector: [],
+          timings_ms: {},
+          models: {},
+        },
+      }),
+    )
+
+    render(
+      <DataProvider>
+        <Probe />
+      </DataProvider>,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+    expect(screen.getByTestId('last-answer')).toHaveTextContent('none')
+  })
+
+  it('ignores a stale refresh that finishes after a newer one', async () => {
+    let resolveStale: (value: DocumentSummary[]) => void = () => {}
+    const stale = new Promise<DocumentSummary[]>((resolve) => {
+      resolveStale = resolve
+    })
+
+    render(
+      <DataProvider>
+        <Probe />
+      </DataProvider>,
+    )
+    await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+
+    vi.mocked(api.documents).mockReturnValueOnce(stale)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    vi.mocked(api.documents).mockResolvedValueOnce([{ ...documents[0], title: 'Fresh notes' }])
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() => expect(screen.getByTestId('documents')).toHaveTextContent('Fresh notes'))
+
+    resolveStale(documents)
+    await waitFor(() => expect(screen.getByTestId('documents')).toHaveTextContent('Fresh notes'))
+    expect(screen.getByTestId('documents')).not.toHaveTextContent('HNSW notes')
   })
 })

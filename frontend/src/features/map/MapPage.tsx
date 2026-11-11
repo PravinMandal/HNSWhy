@@ -192,7 +192,7 @@ export function MapPage({ onOpenDocuments }: { onOpenDocuments: () => void }) {
           description="The library has chunks, but none of them returned a stored embedding. Re-embed the library or refresh to try again."
           action={<Button variant="secondary" onClick={refresh}>Refresh map</Button>}
         />
-      ) : projecting || !projection ? (
+      ) : map && (projecting || !projection) ? (
         <div
           className="map-loading"
           role="status"

@@ -173,16 +173,8 @@ std::string take_value(int argc, char** argv, int& index, std::string_view flag)
     return argv[index];
 }
 
-bool has_flag(int argc, char** argv, std::string_view flag) {
-    for (int i = 1; i < argc; ++i) {
-        if (std::string_view(argv[i]) == flag) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void apply_command_line(AppConfig& config, int argc, char** argv) {
+void apply_command_line(AppConfig& config, int argc, char** argv, bool& m0_explicit,
+                        bool& dim_explicit) {
     for (int i = 1; i < argc; ++i) {
         const std::string flag = argv[i];
         if (flag == "--help" || flag == "-h") {
@@ -213,6 +205,7 @@ void apply_command_line(AppConfig& config, int argc, char** argv) {
         } else if (flag == "--embedding-dim") {
             config.embedding.dim = static_cast<std::size_t>(
                 parse_long(flag, take_value(argc, argv, i, flag), 0, 65536));
+            dim_explicit = true;
         } else if (flag == "--chat-provider") {
             config.chat.provider = take_value(argc, argv, i, flag);
         } else if (flag == "--chat-model") {
@@ -225,6 +218,7 @@ void apply_command_line(AppConfig& config, int argc, char** argv) {
         } else if (flag == "--M0") {
             config.hnsw.M0 = static_cast<std::size_t>(
                 parse_long(flag, take_value(argc, argv, i, flag), 4, 65535));
+            m0_explicit = true;
         } else if (flag == "--ef-construction") {
             config.hnsw.efConstruction = static_cast<std::size_t>(
                 parse_long(flag, take_value(argc, argv, i, flag), 1, 10000));
@@ -253,22 +247,23 @@ void apply_command_line(AppConfig& config, int argc, char** argv) {
 
 AppConfig load_config(int argc, char** argv) {
     AppConfig config;
+    // Explicitly set flags are recorded while parsing, not detected by a second
+    // argv scan: an option value that happens to equal "--M0" or
+    // "--embedding-dim" must not silently disable the derived defaults.
+    bool m0_explicit = env_value("HNSWHY_HNSW_M0") != nullptr;
+    bool dim_explicit = env_value("HNSWHY_EMBEDDING_DIM") != nullptr;
     apply_environment(config);
-    apply_command_line(config, argc, argv);
+    apply_command_line(config, argc, argv, m0_explicit, dim_explicit);
     // Run after command-line parsing because --embedding-base-url and
     // --chat-base-url decide whether the ambient OpenAI key is safe to use.
     apply_default_openai_key(config);
 
     // M0 defaults to twice M. Derive it only when the user did not set it, so
     // changing --M alone stays valid while an explicit M0 keeps its own value.
-    const bool m0_explicit =
-        env_value("HNSWHY_HNSW_M0") != nullptr || has_flag(argc, argv, "--M0");
     if (!m0_explicit) {
         config.hnsw.M0 = config.hnsw.M * 2;
     }
 
-    const bool dim_explicit =
-        env_value("HNSWHY_EMBEDDING_DIM") != nullptr || has_flag(argc, argv, "--embedding-dim");
     if (!dim_explicit) {
         const std::string provider = lower(trim(config.embedding.provider));
         config.embedding.dim = provider.empty() || provider == "hash" ? 256 : 0;

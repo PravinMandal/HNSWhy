@@ -187,6 +187,8 @@ export function Sidebar({
           type="button"
           className="rail-action rail-action--icon"
           onClick={refresh}
+          disabled={refreshing}
+          aria-busy={refreshing}
           aria-label="Refresh server status"
           title="Refresh server status"
         >

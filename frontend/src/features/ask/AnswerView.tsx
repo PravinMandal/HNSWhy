@@ -28,10 +28,23 @@ const citationSchema = {
   },
 }
 
+// Split Markdown into prose and code segments: backtick fences, tilde fences,
+// and inline spans. String.split with one capture group alternates prose and
+// code, so even indices are prose and odd indices are code. Both citation
+// detection and citation rewriting use this so they agree on what is a real
+// marker rather than `array[1]` in a code sample.
+const CODE_SEGMENTS = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g
+
+function proseSegments(markdown: string): string[] {
+  return markdown.split(CODE_SEGMENTS).filter((_, index) => index % 2 === 0)
+}
+
 function citationNumbers(text: string, sourceCount: number): number[] {
-  return Array.from(text.matchAll(/\[(\d+)\]/g))
-    .map((match) => Number(match[1]))
-    .filter((index) => index >= 1 && index <= sourceCount)
+  return proseSegments(text).flatMap((segment) =>
+    Array.from(segment.matchAll(/\[(\d+)\](?!\()/g))
+      .map((match) => Number(match[1]))
+      .filter((index) => index >= 1 && index <= sourceCount),
+  )
 }
 
 /**
@@ -42,9 +55,9 @@ function citationNumbers(text: string, sourceCount: number): number[] {
  */
 export function linkCitations(markdown: string, sourceCount: number): string {
   return markdown
-    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
-    .map((segment) => {
-      if (segment.startsWith('`')) {
+    .split(CODE_SEGMENTS)
+    .map((segment, index) => {
+      if (index % 2 === 1) {
         return segment
       }
       return segment.replace(/\[(\d+)\](?!\()/g, (match, digits: string) => {

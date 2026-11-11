@@ -201,6 +201,9 @@ std::string extract_pdf(std::string_view bytes) {
             throw ProductError("DOCUMENT_TOO_LARGE", "extracted PDF text is too large", 422);
         }
     }
+    if (std::ferror(pipe.get()) != 0) {
+        throw ProductError("EXTRACTION_FAILED", "could not read pdftotext output", 422);
+    }
     const int status = ::pclose(pipe.release());
     if (status != 0) {
         const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;

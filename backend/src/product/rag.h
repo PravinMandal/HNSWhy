@@ -42,6 +42,14 @@ struct RagAnswer {
     std::string chat_model;
 };
 
+// Validates and normalizes a question without calling the embedding provider.
+// The application uses this before deciding whether an empty library can skip
+// the provider round trip entirely.
+std::string normalize_question(std::string_view question);
+
+// Rejects retrieval counts outside the range the API accepts.
+void validate_k(std::size_t k);
+
 // Everything the retrieval phase needs from the question embedding step. It
 // deliberately contains no store/index references so the embedding HTTP call
 // can run before the application takes its database mutex.
@@ -61,6 +69,11 @@ public:
     // Convenience path for tests and single-threaded callers. Application uses
     // the three phases below so slow provider calls never hold the mutex.
     RagAnswer ask(std::string_view question, std::size_t k);
+
+    // A refusal that never calls the embedding or chat provider. Used when the
+    // library is empty: there is nothing to search, so a remote provider
+    // outage must not turn "no documents" into a 503.
+    RagAnswer no_answer() const;
 
     // Phase 1: validate the question and call the embedding provider. Cheap to
     // run outside any lock.

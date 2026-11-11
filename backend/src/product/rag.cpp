@@ -53,6 +53,26 @@ std::string build_user_prompt(std::string_view question,
 
 }  // namespace
 
+std::string normalize_question(std::string_view question) {
+    std::string normalized = trim_copy(question);
+    if (normalized.empty()) {
+        throw validation_error("question must not be empty");
+    }
+    if (!is_valid_utf8(normalized)) {
+        throw validation_error("question must be valid UTF-8");
+    }
+    if (utf8_length(normalized) > 2000) {
+        throw validation_error("question must be at most 2000 characters");
+    }
+    return normalized;
+}
+
+void validate_k(std::size_t k) {
+    if (k == 0 || k > 20) {
+        throw validation_error("k must be between 1 and 20");
+    }
+}
+
 RagService::RagService(const DocumentStore& store, VectorIndex& index,
                        const EmbeddingProvider& embedder, const ChatProvider& chat,
                        std::size_t ef_search)
@@ -62,18 +82,19 @@ RagService::RagService(const DocumentStore& store, VectorIndex& index,
     }
 }
 
+RagAnswer RagService::no_answer() const {
+    RagAnswer answer;
+    answer.embedding_provider = embedder_.name();
+    answer.embedding_model = embedder_.model();
+    answer.chat_provider = chat_.name();
+    answer.chat_model = chat_.model();
+    answer.answer = kNoAnswer;
+    return answer;
+}
+
 RagQuery RagService::embed_question(std::string_view question) const {
     RagQuery query;
-    query.question = trim_copy(question);
-    if (query.question.empty()) {
-        throw validation_error("question must not be empty");
-    }
-    if (!is_valid_utf8(query.question)) {
-        throw validation_error("question must be valid UTF-8");
-    }
-    if (utf8_length(query.question) > 2000) {
-        throw validation_error("question must be at most 2000 characters");
-    }
+    query.question = normalize_question(question);
 
     query.started_at = Clock::now();
     const Clock::time_point embed_begin = Clock::now();
@@ -92,9 +113,7 @@ RagQuery RagService::embed_question(std::string_view question) const {
 }
 
 RagAnswer RagService::retrieve(const RagQuery& query, std::size_t k) {
-    if (k == 0 || k > 20) {
-        throw validation_error("k must be between 1 and 20");
-    }
+    validate_k(k);
 
     RagAnswer answer;
     answer.embedding_provider = embedder_.name();

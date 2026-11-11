@@ -158,6 +158,9 @@ HNSWHY_TEST(text_validates_utf8_and_truncates_at_codepoint_boundaries) {
     CHECK_EQ(hnswhy::truncate_utf8(accented, 3), std::string("a\xC3\xA9"));
     CHECK_EQ(hnswhy::utf8_length(accented), std::size_t{3});
     CHECK_EQ(hnswhy::truncate_utf8_words("alpha beta gamma", 8), std::string("alpha..."));
+    CHECK_EQ(hnswhy::truncate_utf8_words("abcdefgh", 5), std::string("ab..."));
+    CHECK_EQ(hnswhy::truncate_utf8_words("abcdefgh", 2), std::string("ab"));
+    CHECK(hnswhy::truncate_utf8_words(std::string(100, 'x'), 10).size() <= 10);
     CHECK_THROWS_AS(hnswhy::extract_text(std::string("\xC3\x28", 2), "bad.txt", "text/plain"),
                     hnswhy::ProductError);
 }

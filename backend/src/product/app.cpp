@@ -37,6 +37,13 @@ std::string preview(std::string_view text, std::size_t limit = kMapPreviewBytes)
     return truncate_utf8_words(text, limit);
 }
 
+// NUL is valid UTF-8, but SQLite's length() and substr() stop at the first NUL.
+// Accepting it would make char_count and previews disagree with the stored text,
+// so reject it at the same boundary that rejects binary uploads.
+bool contains_nul(std::string_view text) {
+    return text.find('\0') != std::string_view::npos;
+}
+
 std::string title_from_source(const std::string& source) {
     if (source.empty() || source == "paste" || source == "sample") {
         return "Untitled document";
@@ -174,6 +181,11 @@ Application::PreparedDocument Application::prepare_document(std::string title,
     if (!is_valid_utf8(prepared.text)) {
         throw ProductError("INVALID_UTF8", "the document text is not valid UTF-8", 422);
     }
+    if (contains_nul(prepared.title) || contains_nul(prepared.source) ||
+        contains_nul(prepared.text)) {
+        throw ProductError("INVALID_TEXT",
+                           "the document must not contain NUL bytes", 422);
+    }
     if (utf8_length(prepared.title) > kMaxTitleChars) {
         throw validation_error("title must be at most 200 characters");
     }
@@ -305,10 +317,24 @@ bool Application::delete_document(Id document_id) {
 }
 
 RagAnswer Application::ask(std::string_view question, std::size_t k) {
+    // Validate before the empty check so a malformed question still gets a
+    // 400 even when there is nothing to search.
+    const std::string normalized = normalize_question(question);
+    validate_k(k);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (index_.live() == 0) {
+            // Nothing is indexed, so a provider outage must not turn "no
+            // documents" into a 503, and there is no reason to pay embedding
+            // latency for a question that cannot match anything.
+            return rag_.no_answer();
+        }
+    }
+
     // The embedding and chat providers may perform slow network calls. Only
     // the retrieval step touches the index and store, so keep the mutex around
     // that step alone: uploads and deletes stay responsive during generation.
-    const RagQuery query = rag_.embed_question(question);
+    const RagQuery query = rag_.embed_question(normalized);
     RagAnswer answer;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -390,8 +416,9 @@ HealthView Application::health() {
     HealthView view;
     // Health must stay responsive while an upload holds the application mutex.
     // SQLite is opened in serialized mode and the provider pointers are
-    // immutable after construction, so this read does not need the content
-    // lock.
+    // immutable after construction, so this read is safe without the content
+    // lock. The counts can briefly include rows from an upload that has not
+    // committed yet; they are used for liveness, not for exact inventory.
     try {
         view.store = store_.stats();
         view.database = "ok";
@@ -419,25 +446,34 @@ HealthView Application::health() {
     return view;
 }
 
-std::optional<std::string> Application::benchmark_json() const {
+BenchmarkFile Application::benchmark_json() const {
+    BenchmarkFile result;
     std::error_code error;
     if (!std::filesystem::is_regular_file(config_.bench_report, error)) {
-        return std::nullopt;
+        return result;  // no report yet: not an error
     }
     const auto size = std::filesystem::file_size(config_.bench_report, error);
-    if (error || size > 10U * 1024U * 1024U) {
-        return std::nullopt;
+    if (error) {
+        result.error = "the benchmark report exists but its size could not be read";
+        return result;
+    }
+    if (size > 10U * 1024U * 1024U) {
+        result.error = "the benchmark report is larger than the 10 MB response limit";
+        return result;
     }
     std::ifstream input(config_.bench_report, std::ios::binary);
     if (!input) {
-        return std::nullopt;
+        result.error = "the benchmark report exists but could not be opened";
+        return result;
     }
     std::string contents((std::istreambuf_iterator<char>(input)),
                          std::istreambuf_iterator<char>());
     if (contents.empty()) {
-        return std::nullopt;
+        result.error = "the benchmark report is empty";
+        return result;
     }
-    return contents;
+    result.contents = std::move(contents);
+    return result;
 }
 
 void Application::build_index_from_chunks_locked(const std::vector<EmbeddedChunk>& chunks) {
@@ -544,7 +580,13 @@ bool Application::seed_sample_locked() {
         return true;
     }
 
+    // Record that seeding started before the first write. A crash mid-way then
+    // leaves a marker the next start can see, instead of a partial library that
+    // looks like a finished initialization.
+    store_.set_meta("sample_seeding", "1");
+
     std::size_t loaded = 0;
+    std::size_t existing = 0;
     for (const auto& path : files) {
         std::ifstream input(path, std::ios::binary);
         if (!input) {
@@ -565,6 +607,13 @@ bool Application::seed_sample_locked() {
                                                  ? std::string::npos
                                                  : newline - 2));
         }
+        // A crash can interrupt seeding after some files are committed. Skip
+        // the ones already present so the next start completes the set instead
+        // of duplicating them or freezing a partial library.
+        if (store_.document_exists(title, "sample")) {
+            ++existing;
+            continue;
+        }
         try {
             insert_document_locked(prepare_document(title, "sample", std::move(text)));
             ++loaded;
@@ -572,11 +621,12 @@ bool Application::seed_sample_locked() {
             log("sample file failed: " + path.filename().string() + ": " + exception.what());
         }
     }
-    if (loaded > 0) {
+    if (loaded > 0 || existing > 0) {
         store_.set_meta("sample_loaded", "1");
     }
-    log("seeded sample knowledge base with " + std::to_string(loaded) + " documents");
-    return loaded > 0;
+    log("seeded sample knowledge base: " + std::to_string(loaded) + " new, " +
+        std::to_string(existing) + " already present");
+    return loaded + existing > 0;
 }
 
 void Application::initialize() {
@@ -636,8 +686,16 @@ void Application::initialize() {
     const bool initialized = store_.meta("app_initialized").has_value();
     if (!initialized) {
         const StoreStats current = store_.stats();
+        // Seeding runs for a fresh library, or to finish a seed a crash
+        // interrupted. The second case is why sample_seeding exists: without
+        // it, a partially populated library would be marked initialized and
+        // stay incomplete forever.
+        const bool interrupted_seed =
+            store_.meta("sample_seeding").has_value() &&
+            !store_.meta("sample_loaded").has_value();
+        const bool empty_library = current.documents == 0 && current.chunks == 0;
         bool seeding_finished = true;
-        if (config_.load_sample && current.documents == 0 && current.chunks == 0) {
+        if (config_.load_sample && (empty_library || interrupted_seed)) {
             if (embedder_->name() == "hash") {
                 seeding_finished = seed_sample_locked();
             } else {
