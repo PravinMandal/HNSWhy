@@ -25,7 +25,10 @@ add_library(hnswhy_product STATIC
     src/product/text.cpp
     src/product/vector_index.cpp
 )
-target_link_libraries(hnswhy_product PUBLIC hnswhy_engine SQLite3::SQLite3 Threads::Threads)
+# `SQLite::SQLite3` exists in every CMake that ships FindSQLite3 (3.14+).
+# The `SQLite3::SQLite3` spelling only appears in CMake 4.3+, so using it here
+# breaks the Ubuntu 24.04 runner's CMake 3.28.
+target_link_libraries(hnswhy_product PUBLIC hnswhy_engine SQLite::SQLite3 Threads::Threads)
 target_include_directories(hnswhy_product PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party
