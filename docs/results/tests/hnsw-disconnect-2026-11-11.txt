@@ -1,0 +1,6 @@
+trial 0 reachable=8000/8000 fallback=0 dist=1342
+trial 1 reachable=7999/8000 fallback=1 dist=1274
+trial 2 reachable=8000/8000 fallback=0 dist=1289
+trial 3 reachable=8000/8000 fallback=0 dist=1258
+trial 4 reachable=8000/8000 fallback=0 dist=1315
+dup N=100000 exact-fallback 0.468 ms | bruteforce 0.312 ms | ratio 1.50x

@@ -252,7 +252,7 @@ The UI should map error codes to actionable states, not dump a raw stack trace.
 - SVG for the benchmark curve and the 2D map; Canvas for the 3D map.
 - Split CSS: design tokens, base, layout, UI primitives, and one file per feature.
 - Vitest for routing, the data provider, theme persistence, dialogs, formatting, PCA,
-  and page behaviour (55 tests in 15 files).
+  and page behaviour (67 tests in 17 files).
 - A real-browser end-to-end suite (`scripts/e2e/`) against the built bundle, the HTTP
   API, SQLite, and the HNSW index.
 - No Next.js, no server-side rendering, no charting SaaS.

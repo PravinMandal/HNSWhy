@@ -1,0 +1,18 @@
+[PASS] styles are applied to the real build
+[PASS] documents page renders with a live server
+[PASS] metric cards are populated, not placeholders
+[PASS] library lists the starter corpus and filters by title
+[PASS] document detail dialog opens with text and chunk tabs
+[PASS] pasted text becomes a searchable document
+[PASS] deleting a document requires confirmation and removes it
+[PASS] ask returns a cited answer and retrieved chunks
+[PASS] map projects the corpus and exposes an inspectable list
+[PASS] benchmark page renders measured results and switches efSearch
+[PASS] theme toggle changes and persists the theme
+[PASS] mobile layout has no horizontal overflow and exposes navigation
+[PASS] skip link targets the main landmark
+[PASS] keyboard dialogs trap focus and restore it on close
+[PASS] no console errors, page errors, failed requests, or error responses
+[PASS] screenshots were written
+
+16 passed, 0 failed

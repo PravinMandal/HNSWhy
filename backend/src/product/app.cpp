@@ -1,7 +1,14 @@
 #include "product/app.h"
 
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -448,26 +455,56 @@ HealthView Application::health() {
 
 BenchmarkFile Application::benchmark_json() const {
     BenchmarkFile result;
-    std::error_code error;
-    if (!std::filesystem::is_regular_file(config_.bench_report, error)) {
-        return result;  // no report yet: not an error
-    }
-    const auto size = std::filesystem::file_size(config_.bench_report, error);
-    if (error) {
-        result.error = "the benchmark report exists but its size could not be read";
-        return result;
-    }
-    if (size > 10U * 1024U * 1024U) {
-        result.error = "the benchmark report is larger than the 10 MB response limit";
-        return result;
-    }
-    std::ifstream input(config_.bench_report, std::ios::binary);
-    if (!input) {
+    // Open once and read only the size reported for that descriptor. The
+    // previous stat-then-ifstream sequence could follow a replaced symlink or
+    // read an unbounded file that grew between the two calls.
+    const int fd = ::open(config_.bench_report.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        if (errno == ENOENT || errno == ENOTDIR) {
+            return result;  // no report yet: not an error
+        }
         result.error = "the benchmark report exists but could not be opened";
         return result;
     }
-    std::string contents((std::istreambuf_iterator<char>(input)),
-                         std::istreambuf_iterator<char>());
+    struct stat info {};
+    if (::fstat(fd, &info) != 0) {
+        ::close(fd);
+        result.error = "the benchmark report exists but its size could not be read";
+        return result;
+    }
+    if (!S_ISREG(info.st_mode)) {
+        ::close(fd);
+        result.error = "the benchmark report is not a regular file";
+        return result;
+    }
+    constexpr std::uint64_t kMaxReportBytes = 10U * 1024U * 1024U;
+    if (info.st_size < 0 ||
+        static_cast<std::uint64_t>(info.st_size) > kMaxReportBytes) {
+        ::close(fd);
+        result.error = "the benchmark report is larger than the 10 MB response limit";
+        return result;
+    }
+
+    std::string contents(static_cast<std::size_t>(info.st_size), '\0');
+    std::size_t total = 0;
+    while (total < contents.size()) {
+        const ssize_t count =
+            ::read(fd, contents.data() + total, contents.size() - total);
+        if (count < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            ::close(fd);
+            result.error = "the benchmark report exists but could not be read";
+            return result;
+        }
+        if (count == 0) {
+            break;
+        }
+        total += static_cast<std::size_t>(count);
+    }
+    ::close(fd);
+    contents.resize(total);
     if (contents.empty()) {
         result.error = "the benchmark report is empty";
         return result;
@@ -695,17 +732,23 @@ void Application::initialize() {
             !store_.meta("sample_loaded").has_value();
         const bool empty_library = current.documents == 0 && current.chunks == 0;
         bool seeding_finished = true;
+        bool seeding_skipped = false;
         if (config_.load_sample && (empty_library || interrupted_seed)) {
             if (embedder_->name() == "hash") {
                 seeding_finished = seed_sample_locked();
             } else {
+                // Do not mark the database initialized: the user may switch
+                // back to the hash provider later, and the sample library
+                // should still be available on that start. A real upload
+                // leaves the library non-empty, so this never reseeds over it.
+                seeding_skipped = true;
                 log("sample knowledge base skipped because it requires the offline hash "
-                    "embedding provider");
+                    "embedding provider; it will seed if the provider changes");
             }
         }
-        if (seeding_finished) {
+        if (seeding_finished && !seeding_skipped) {
             store_.set_meta("app_initialized", "1");
-        } else {
+        } else if (!seeding_finished) {
             log("sample seeding did not load any documents; retrying on the next startup");
         }
     }

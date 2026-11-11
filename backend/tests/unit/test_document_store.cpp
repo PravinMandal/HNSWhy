@@ -1,8 +1,10 @@
 #include "product/document_store.h"
 
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <system_error>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -295,6 +297,33 @@ HNSWHY_TEST(document_store_samples_and_reports_stats) {
     CHECK_EQ(store.stats().embeddings, std::size_t{3});
 }
 
+HNSWHY_TEST(document_store_fetches_more_chunks_than_one_sql_batch) {
+    TempDb file("chunk-batch");
+    hnswhy::DocumentStore store(file.path());
+
+    constexpr std::size_t kChunks = 1200;
+    std::vector<hnswhy::NewChunk> chunks;
+    chunks.reserve(kChunks);
+    for (std::size_t i = 0; i < kChunks; ++i) {
+        chunks.push_back(chunk("chunk " + std::to_string(i), static_cast<float>(i)));
+    }
+    const hnswhy::InsertResult inserted =
+        store.insert_document("Large", "large.txt", "large document", chunks);
+    CHECK_EQ(inserted.chunk_ids.size(), kChunks);
+
+    // Reverse the ids so the result order cannot accidentally match rowid
+    // order; get_chunks must preserve the caller's order across SQL batches.
+    std::vector<hnswhy::Id> reversed(inserted.chunk_ids.rbegin(),
+                                     inserted.chunk_ids.rend());
+    const std::vector<hnswhy::ChunkDetail> found = store.get_chunks(reversed);
+    CHECK_EQ(found.size(), kChunks);
+    for (std::size_t i = 0; i < found.size(); ++i) {
+        CHECK_EQ(found[i].chunk_id, reversed[i]);
+    }
+    CHECK_EQ(found.front().text, std::string("chunk 1199"));
+    CHECK_EQ(found.back().text, std::string("chunk 0"));
+}
+
 HNSWHY_TEST(document_store_rejects_inconsistent_embeddings) {
     TempDb file("inconsistent");
     hnswhy::DocumentStore store(file.path());
@@ -303,4 +332,46 @@ HNSWHY_TEST(document_store_rejects_inconsistent_embeddings) {
                               {chunk("a", 1.0f), hnswhy::NewChunk{"b", {1.0f, 2.0f}}}),
         hnswhy::ProductError);
     CHECK_EQ(store.stats().documents, std::size_t{0});
+}
+
+HNSWHY_TEST(document_store_rejects_a_newer_schema) {
+    TempDb file("schema");
+    {
+        hnswhy::DocumentStore store(file.path());
+    }
+    // A database written by a newer build may contain tables or columns this
+    // build does not understand. Opening it read-write would corrupt it, so
+    // the store must refuse instead of guessing.
+    exec_sql(file.path(), "PRAGMA user_version = 2");
+    try {
+        hnswhy::DocumentStore store(file.path());
+        CHECK(false);
+    } catch (const std::runtime_error& error) {
+        CHECK(std::string(error.what()).find("newer") != std::string::npos);
+    }
+}
+
+HNSWHY_TEST(document_store_restricts_files_to_the_owner) {
+    TempDb file("permissions");
+    const mode_t previous = ::umask(0);
+    try {
+        hnswhy::DocumentStore store(file.path());
+        ::umask(previous);
+        const auto owner_only = std::filesystem::perms::owner_read |
+                                std::filesystem::perms::owner_write;
+        CHECK(std::filesystem::status(file.path()).permissions() == owner_only);
+        CHECK(std::filesystem::status(file.path().string() + ".lock").permissions() ==
+              owner_only);
+        // WAL and SHM may be removed on a clean close; check them only when
+        // they exist while the store is open.
+        for (const char* suffix : {"-wal", "-shm"}) {
+            const std::filesystem::path sidecar = file.path().string() + suffix;
+            if (std::filesystem::exists(sidecar)) {
+                CHECK(std::filesystem::status(sidecar).permissions() == owner_only);
+            }
+        }
+    } catch (...) {
+        ::umask(previous);
+        throw;
+    }
 }

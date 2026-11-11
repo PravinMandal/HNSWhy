@@ -226,6 +226,10 @@ reach layer 2, and so on. A histogram test checks the shape, not exact counts.
 - `id` is not marked deleted.
 - "Graph is empty" means `slot_count() == 0`, not `size() == 0`. An all-tombstone graph
   is not empty; insertion must attach through the tombstones (§5.3).
+- Precondition failures (`id` outside the store, non-append `id`) throw before the
+  graph is touched. An exception from inside the insert leaves adjacency arrays
+  partially linked; the implementation marks the graph unusable and every later
+  operation throws until the caller rebuilds from the source of truth.
 
 ### 5.2 Procedure
 
@@ -446,6 +450,30 @@ Query stays live-only so `ef` is not spent on tombstone results.
 
 ---
 
+## 6.5 Disconnected layer-0 graphs
+
+Standard HNSW assumes layer 0 is navigable from `entry_`. Insertion and pruning can
+still leave live nodes in another component. Returning only what the beam found would
+silently drop them, and the miss grows with the stranded set.
+
+The implementation keeps an exact reachable set from `entry_`:
+
+- On insert, the cache is marked dirty only when reachability can actually change: the
+  insert becomes the new entry, gets no live layer-0 in-edge, or was attached through
+  a removed edge. Every deletion marks it dirty.
+- When dirty, a layer-0 walk from `entry_` records the live slots it cannot reach.
+- `search()` scans exactly those slots, merges them into the beam result, and
+  deduplicates by slot ID.
+- In that mode the beam is seeded with both the last upper-layer node and `entry_`.
+  Greedy descent can land in a different component than `entry_`, and seeding only the
+  descent node would miss the component that `entry_` guarantees.
+- `stats.exact_fallbacks` counts queries that used this repair, not individual scans.
+
+This is a correctness repair path, not a claim that a disconnected graph is healthy.
+Frequent fallbacks mean the build parameters, churn, or prune policy should be fixed.
+
+---
+
 ## 7. Prune (Algorithm 4)
 
 `selectNeighbours(ref, candidates, cap)` chooses a diverse subset of candidates for
@@ -455,15 +483,14 @@ the neighbour list of `ref`.
 
 For each candidate `c`, in increasing order of `d(c, ref)`:
 
-- Keep `c` if, for every already-selected neighbour `s`,
-  `d(c, s) > d(c, ref)`.
-- Reject `c` otherwise (it is closer to an existing selected neighbour than to
-  `ref`, so it is redundant for connectivity).
+- Keep `c` if every already-selected neighbour `s` satisfies
+  `d(c, s) == 0` or `d(c, s) >= d(c, ref)`.
+- Reject `c` when `0 < d(c, s) < d(c, ref)` (it is closer to an existing selected
+  neighbour than to `ref`, so it is redundant for connectivity).
 - Stop when `cap` neighbours are selected.
 
-Ties in `d(c, ref)` are broken by ID. Reject when
-`0 < d(c, s) < d(c, ref)`. A zero distance means an exact duplicate; it is kept
-(up to `cap`) so all copies stay mutually reachable. Rejecting duplicates turns
+Ties in `d(c, ref)` are broken by ID. A zero distance means an exact duplicate; it is
+kept (up to `cap`) so all copies stay mutually reachable. Rejecting duplicates turns
 some of them into one-way leaves that no query can reach.
 
 ### 7.2 Worked example
@@ -633,11 +660,14 @@ The two-cluster test is the permanent guard for the prune heuristic. If someone
 Let `N` be the number of slots, `M` the degree cap, `efC` the construction beam, and
 `efS` the search beam.
 
-- **Insert:** expected `O(M log N + efC * M)` distance/edge work. The upper-layer
-  descent is `O(M log N)` with `ef=1`; the beam runs on the expected `O(1)` layers the
-  node joins (the geometric level distribution gives `M / (M - 1)`), each at
-  `O(efC * M)`. Build is `N` inserts and is dominated by `N * efC * M` for the
-  default parameters.
+- **Insert:** expected `O(M log N + efC * M)` distance/edge work for the search and
+  linking, plus the diversity repairs. The upper-layer descent is `O(M log N)` with
+  `ef=1`; the beam runs on the expected `O(1)` layers the node joins (the geometric
+  level distribution gives `M / (M - 1)`), each at `O(efC * M)`. When a selected
+  neighbour's list is already full, the merged pool is re-pruned with the diversity
+  heuristic: up to `M0` repairs, each `O(M0^2)` pairwise checks, so the layer-0 worst
+  case adds `O(M0^3)` distance work per insert. Build is `N` inserts and is dominated
+  by `N * efC * M` at the default parameters, with the repair term bounded by `M0^3`.
 - **Search:** expected `O(M log N + efS * M)`: `O(M log N)` for the greedy descent and
   `O(efS * M)` for the layer-0 beam.
 - **Memory:** layer 0 links `N * M0 * 4` bytes; degree `N * 2`; upper layers roughly

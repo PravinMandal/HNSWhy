@@ -671,19 +671,27 @@ graph is an acceleration structure, not a cache that can be shared through SQLit
 
 ---
 
-## D31 — A disconnected graph falls back to exact search
+## D31 — A disconnected graph scans its unreachable live slots
 
-**Decision.** `HNSW` caches whether layer 0 reaches every live node. After any insert
-or removed edge the cache is invalidated. If a search finds the graph disconnected, it
-scans the live vectors exactly and reports `SearchStats::exact_fallbacks`.
+**Decision.** `HNSW` caches whether layer 0 reaches every live node and records the
+live slots it cannot reach. After any structural change that can affect reachability
+(an insert that becomes the entry, has no live incoming edge, or follows a removed
+edge; a deletion) the cache is invalidated. While the graph is disconnected, search
+runs the normal graph walk and then scans exactly the unreachable live slots, merging
+both sets before taking the top-k. `SearchStats::exact_fallbacks` reports that this
+happened.
 
 **Why.** Tombstones and pruning can strand a component without breaking the graph's
 structural invariants. Returning a silently truncated neighbour list would make recall
-look fine on average and fail on the one query that matters.
+look fine on average and fail on the one query that matters. A full exact scan fixes
+that but turns every query into brute force, which on tie-heavy data was 7.5× slower
+than the brute-force engine itself. Scanning only the stranded slots keeps the
+guarantee that no live node is invisible while paying for the damage, not for the
+whole index.
 
 **Consequences.** Recall cannot collapse on a damaged graph; worst-case latency for
-that query is an exact scan. Tests assert the counter, and the regression test on seed
-6942 reproduces the old stale-cache failure.
+that query grows with the unreachable set, not with N. Tests assert the counter, and
+the regression test on seed 6942 reproduces the old stale-cache failure.
 
 ---
 
@@ -701,6 +709,231 @@ still printing a plausible recall number.
 **Consequences.** Clients must send `Content-Type: application/json` for JSON bodies;
 multipart uploads are unaffected. Changing the dataset or `k` costs one ground-truth
 recomputation, which is the correct trade.
+
+---
+
+## D33 — An empty library refuses without calling a provider
+
+**Decision.** `Application::ask` validates the question and `k` first, then returns
+`RagService::no_answer()` when the index has no live vectors. The embedding and chat
+providers are not called.
+
+**Why.** With nothing indexed, the only correct answer is the grounded refusal. Paying
+a provider round trip cannot change it, and a provider outage would otherwise turn
+"no documents" into a 503 that blames the wrong subsystem.
+
+**Consequences.** Validation still runs first, so a malformed question gets its 400 on
+an empty library. The refusal carries provider/model metadata like any other answer so
+the UI renders one shape. Tests assert zero provider calls and `total_ms == 0`.
+
+---
+
+## D34 — Document text must not contain NUL bytes
+
+**Decision.** Uploads reject `\0` in the title, source name, or text with 422
+`INVALID_TEXT`. UTF-8 validation alone is not enough because NUL is valid UTF-8.
+
+**Why.** SQLite's `length()` and `substr()` stop at the first NUL. Accepting one would
+make `char_count`, chunk previews, and stored text disagree, and the browser would
+render a truncated document that looked complete.
+
+**Consequences.** Binary uploads already failed UTF-8 validation; this closes the
+text-shaped hole. The API suite uploads `"a\u0000b"` and expects 422.
+
+---
+
+## D35 — Sample seeding is resumable and never overwrites user data
+
+**Decision.** Seeding writes a `sample_seeding` marker before the first document and
+`sample_loaded` after the last. Startup seeds only when the library is empty or an
+interrupted seed is detected. A document that already exists (same title and source)
+is skipped instead of inserted again. `app_initialized` is written only when seeding
+finished.
+
+**Why.** A crash halfway through seeding used to leave a partial library that looked
+initialized and stayed incomplete forever. Re-running blindly would duplicate
+documents; seeding whenever the initialization marker is missing would overwrite a
+user's library.
+
+**Consequences.** A fresh start and a resumed start converge on the same eight
+documents. A library with user data never receives samples, even if the marker is
+lost. Tests cover fresh, interrupted, and user-data-present cases.
+
+---
+
+## D36 — Stored answers are validated before use
+
+**Decision.** `sessionStorage` answers are parsed with a deep shape check: finite
+numbers, valid timings and models, and a well-formed `sources` array. Anything else is
+discarded and the Ask page starts empty.
+
+**Why.** `sessionStorage` survives reloads and can be edited or written by an older
+build. Rendering an unvalidated object as an answer would show `undefined`, crash a
+formatter, or highlight a nonexistent source.
+
+**Consequences.** A stale or malformed stored answer degrades to "no answer", never to
+a broken page. Tests cover a malformed stored answer and a valid round trip.
+
+---
+
+## D37 — The newest refresh wins
+
+**Decision.** `DataProvider.refreshAll` increments a request counter; only the newest
+request may publish status, health, documents, error, or loading state. Older
+responses are ignored.
+
+**Why.** Refreshes can overlap (a manual refresh during a background one). Without
+ordering, a slow earlier response could overwrite a newer one, so the page would show
+stale counts while claiming to be fresh.
+
+**Consequences.** The refresh button is disabled while a refresh runs, but the guard
+still protects the initial load and any programmatic refresh. A test resolves two
+requests out of order and asserts the newer result is displayed.
+
+---
+
+## D38 — The HTTP server checks Host and cross-site writes before routing
+
+**Decision.** A pre-routing handler requires a `Host` header and rejects any name
+outside an allowlist (`localhost`, `127.0.0.1`, `::1`, the concrete bind host, and
+any `HNSWHY_ALLOWED_HOSTS` / `--allowed-host` entry). State-changing methods also
+reject a cross-site `Sec-Fetch-Site` and an `Origin` that does not match the
+request `Host`. This is transport hygiene, not authentication.
+
+**Why.** A page on an attacker's domain can resolve its own hostname to
+`127.0.0.1` (DNS rebinding) and talk to a loopback demo with the browser's
+credentials. Without an Origin check, an ordinary cross-site form can also
+upload or delete documents. The demo has no auth, so the browser boundary is the
+only one available.
+
+**Consequences.** LAN and reverse-proxy deployments must declare their names or
+receive `403 FORBIDDEN_HOST`; the startup warning says so when bound to a
+wildcard address. Tests cover foreign and loopback hosts, configured extra
+names, and cross-site/none/same-origin fetch metadata.
+
+---
+
+## D39 — The server creates every file owner-only
+
+**Decision.** `main` sets `umask(0077)` before opening anything, and
+`DocumentStore` pre-creates the database at `0600` before taking the
+single-writer lock.
+
+**Why.** The database stores uploaded text and embeddings. Chmod after SQLite
+opens leaves a window where the file is world-readable, and WAL/SHM files are
+created by SQLite outside our control.
+
+**Consequences.** Database, WAL, SHM, lock, temporary PDFs, and logs are readable
+only by the server user. The permission test checks the db and lock files and
+the WAL/SHM files when present.
+
+---
+
+## D40 — PDF extraction is bounded in concurrency and resources
+
+**Decision.** At most two `pdftotext` children run at once; a fifth-second wait
+returns `503 SERVER_BUSY`. Each child runs under `ulimit -v 1048576`,
+`ulimit -t 30`, and `timeout 30s`.
+
+**Why.** Upload is unauthenticated in the local demo. Without a bound, several
+large PDFs could spawn an unbounded number of decoders and exhaust memory or
+CPU.
+
+**Consequences.** A third simultaneous PDF waits up to five seconds, then the
+client is told to retry. Text and Markdown uploads do not take a slot.
+
+---
+
+## D41 — A skipped sample seed is not marked initialized
+
+**Decision.** When seeding is skipped because the active embedder is not the
+offline hash provider, the server leaves `app_initialized` unset and records
+that seeding was skipped. A later start with the hash provider seeds normally.
+
+**Why.** Writing the marker after a skip made the sample library permanently
+absent, even after the provider changed back. This is the same invariant as
+D35: the marker means "the library is in its intended initial state".
+
+**Consequences.** `application_retries_sample_seed_after_a_non_hash_start`
+asserts an empty library and no marker under Ollama, then one document and the
+marker after reopening with hash.
+
+---
+
+## D42 — A failed HNSW insertion poisons the graph until rebuild
+
+**Decision.** `insert()` validates its preconditions, then calls an internal
+body. Any exception from the body sets `poisoned_`; every later mutating or
+query entry point throws `std::logic_error` telling the caller to rebuild.
+
+**Why.** A `std::bad_alloc` halfway through linking a node leaves adjacency
+arrays that no longer describe a valid graph. Continuing would return wrong
+neighbours with no signal. Precondition errors (out-of-range or non-append
+slot) are checked before the body, so they do not poison a healthy graph.
+
+**Consequences.** The product rebuilds from SQLite on a failed insert, which is
+already the documented recovery path. A test inserts an out-of-range slot and
+then verifies the graph still validates and searches.
+
+---
+
+## D43 — `exact_fallbacks` counts queries, not scans
+
+**Decision.** A query that used any exact fallback increments the counter once,
+even if it scanned both the unreachable set and the full store.
+
+**Why.** The field is reported as a query-quality signal: "how many queries
+needed repair". Counting scans made one query look like two and overstated the
+fallback rate.
+
+**Consequences.** Tests assert exactly `1` for a single fallback query. The
+field comment in `types.h` states the unit.
+
+---
+
+## D44 — Chunk lookup batches SQL placeholders
+
+**Decision.** `DocumentStore::get_chunks` sends at most 500 ids per `IN (...)`
+statement and stitches the results in caller order.
+
+**Why.** SQLite has a finite host-variable limit; a large retrieval with one
+placeholder per id could fail or force a compiled-limit change. Batching keeps
+the query inside the default limit.
+
+**Consequences.** Order is preserved across batches. A test requests 1,200
+chunks in reverse order and checks the front and back of the result.
+
+---
+
+## D45 — Provider indices are read and range-checked as 64-bit
+
+**Decision.** An OpenAI-compatible `index` is read as `long long`, checked
+against `[0, batch size)`, and tracked for duplicates; a violation is a
+`ProductError` with status 502.
+
+**Why.** Reading directly into `int` made nlohmann throw its own
+`out_of_range`, which surfaced as an internal 500 instead of a provider error.
+An out-of-range index is a bad upstream response, not a server bug.
+
+**Consequences.** Tests cover a duplicate index and `LLONG_MAX`. The error code
+is `PROVIDER_ERROR`.
+
+---
+
+## D46 — A disconnected layer-0 beam starts from both entry points
+
+**Decision.** When the connectivity cache reports a disconnected graph, the
+layer-0 beam is seeded with the last upper-layer node and `entry_`. When the
+graph is connected, only the last upper-layer node is used.
+
+**Why.** Upper-layer descent can land in a different layer-0 component than
+`entry_`. Seeding only the descent node meant the component containing `entry_`
+was never visited, even though it may hold the nearest neighbour.
+
+**Consequences.** The connected path is unchanged, so measured recall and
+latency stay comparable. The two temporary harnesses (one-hot vectors and
+permuted components) pass on both old and new code, so this is a targeted guard
+without a fabricated regression test.
 
 ---
 

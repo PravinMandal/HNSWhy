@@ -1,0 +1,17 @@
+
+> hnswhy-frontend@0.1.0 test
+> vitest run --run
+
+
+ RUN  v5.1.0 /home/pravin/Projects/A dream path/Projects/HNSWhy/frontend
+
+
+ Test Files  17 passed (17)
+      Tests  67 passed (67)
+   Start at  14:13:26
+   Duration  2.20s (environment 56%, tests 25%, setup 12%, import 6%, transform 2%)
+
+Environment  jsdom was created 17 times · 10.68s total, 56% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+

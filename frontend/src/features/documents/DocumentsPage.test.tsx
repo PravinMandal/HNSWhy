@@ -1,5 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DocumentSummary } from '../../api/types'
 import { DataProvider } from '../../app/DataProvider'
 import { ToastProvider } from '../../app/ToastProvider'
 import { DocumentsPage } from './DocumentsPage'
@@ -20,7 +22,11 @@ function renderPage() {
   return render(
     <ToastProvider>
       <DataProvider>
-        <DocumentsPage />
+        {/* AppShell owns this landmark in the real app; the dialog falls back
+            to it when a destructive action removes its opener. */}
+        <main id="main-content" tabIndex={-1}>
+          <DocumentsPage />
+        </main>
       </DataProvider>
     </ToastProvider>,
   )
@@ -66,5 +72,34 @@ describe('DocumentsPage', () => {
 
     expect(await screen.findByText('Build your first knowledge base')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('The server is not reachable.')).not.toBeInTheDocument())
+  })
+
+  it('shows loading counts instead of zero while the first request is pending', () => {
+    apiMocks.documents.mockReturnValue(new Promise(() => {}))
+    renderPage()
+
+    expect(screen.getByText('loading documents')).toBeInTheDocument()
+    expect(screen.getByText('Loading documents…')).toBeInTheDocument()
+  })
+
+  it('moves focus to the main landmark after deleting the focused row', async () => {
+    const user = userEvent.setup()
+    const document: DocumentSummary = {
+      id: 1,
+      title: 'HNSW notes',
+      source: 'notes.md',
+      chunk_count: 2,
+      char_count: 120,
+      created_at: '2026-11-10T14:04:58Z',
+    }
+    apiMocks.documents.mockResolvedValueOnce([document]).mockResolvedValue([])
+    apiMocks.deleteDocument.mockResolvedValue(undefined)
+    renderPage()
+
+    await user.click(await screen.findByRole('button', { name: 'Delete HNSW notes' }))
+    await user.click(screen.getByRole('button', { name: 'Delete document' }))
+
+    await waitFor(() => expect(screen.queryByText('HNSW notes')).not.toBeInTheDocument())
+    expect(screen.getByRole('main')).toHaveFocus()
   })
 })

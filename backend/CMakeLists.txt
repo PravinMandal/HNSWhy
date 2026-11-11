@@ -75,6 +75,7 @@ add_executable(hns_tests
     tests/unit/test_config.cpp
     tests/unit/test_document_store.cpp
     tests/unit/test_providers.cpp
+    tests/unit/test_http.cpp
     tests/unit/test_vector_index.cpp
     tests/unit/test_rag.cpp
     tests/unit/test_persistence.cpp

@@ -36,6 +36,11 @@ public:
     // Inserts every slot currently in the store. Only valid on an empty graph.
     void build();
 
+    // Throws and leaves the graph unusable (every later operation throws) if an
+    // allocation or invariant failure interrupts the insert. The caller must
+    // rebuild the graph; this is cheaper and safer than trying to roll back
+    // half-written edges. Application::insert_document_locked() already
+    // rebuilds from SQLite when VectorIndex::add() throws.
     void insert(Slot id);
 
     // Marks the node deleted. Edges are kept so the node still routes; queries
@@ -48,12 +53,14 @@ public:
     //
     // HNSW can leave parts of the graph unreachable when many vectors are
     // exactly equidistant (duplicates, one-hot data). The graph tracks layer-0
-    // connectivity over live nodes; while it is disconnected, search falls
-    // back to an exact scan so the returned top-k stays exact. Connectivity is
-    // recomputed lazily after every insertion and every removed edge, so a
-    // cached "connected" answer cannot outlive a structural change. On
-    // degenerate data the fallback lasts as long as the live set stays
-    // disconnected; it is not a temporary error.
+    // connectivity over live nodes; while it is disconnected, search scans the
+    // unreachable live slots exactly and merges them into the graph walk, so no
+    // live node is silently omitted without turning every query into a full
+    // scan. Connectivity is recomputed lazily after every structural change
+    // that can affect it, so a cached "connected" answer cannot outlive an
+    // insert, a removed edge, or a deletion. On degenerate data the fallback
+    // lasts as long as the live set stays disconnected; it is not a temporary
+    // error.
     SearchResult search(std::span<const float> query, std::size_t k, std::size_t ef);
 
     // Throws std::runtime_error on a structural invariant violation (degree
@@ -103,9 +110,11 @@ private:
     void recomputeConnectivity();
     void noteEdgeRemoved(Slot target);
 
+    void insertImpl(Slot id);
     void ensureNode(Slot id, int level);
     void ensureCapacity(Slot id);
     void validateParams() const;
+    void requireUsable() const;
 
     const VectorStore& store_;
     HNSWParams params_;
@@ -125,11 +134,19 @@ private:
     std::vector<std::uint32_t> in_degree0_;
     bool layer0_connected_ = true;
     bool layer0_dirty_ = false;
+    // Live slots the layer-0 walk from entry_ cannot reach. Only meaningful
+    // while layer0_connected_ is false; search scans exactly these slots and
+    // merges them into the graph walk instead of scanning every live vector.
+    std::vector<Slot> unreachable_live_;
 
     std::size_t slot_count_ = 0;
     std::size_t live_count_ = 0;
     Slot entry_ = kInvalidSlot;
     int top_level_ = -1;
+    // Set when insert() fails after it started mutating the graph. The graph
+    // is not safe to query after that, so every operation fails loudly until
+    // the owner replaces it.
+    bool poisoned_ = false;
 
     mutable std::vector<std::uint32_t> visit_tag_;
     mutable std::uint32_t visit_generation_ = 0;

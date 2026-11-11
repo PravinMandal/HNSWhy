@@ -332,6 +332,30 @@ async function main() {
     }))
     assert(closed.inert, 'navigation drawer is still interactive after closing')
     assert(closed.right <= 1, `navigation drawer stayed on-screen at right=${closed.right}`)
+
+    // The recall chart keeps readable text by scrolling inside its own region
+    // on a phone instead of shrinking its labels into illegibility.
+    await page.goto(`${BASE}/#/benchmark`, { waitUntil: 'domcontentloaded' })
+    await page.getByRole('heading', { name: 'Measured, not estimated', level: 1 }).waitFor()
+    const chart = page.getByRole('region', { name: /Recall chart/ })
+    await chart.waitFor()
+    const chartMetrics = await chart.evaluate((element) => ({
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+      tabIndex: element.tabIndex,
+    }))
+    assert(chartMetrics.tabIndex === 0, 'the mobile chart is not keyboard-scrollable')
+    assert(
+      chartMetrics.scrollWidth > chartMetrics.clientWidth,
+      'the mobile chart did not switch to its readable scroll width',
+    )
+    const benchmarkOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    )
+    assert(
+      benchmarkOverflow <= 1,
+      `benchmark page overflows horizontally by ${benchmarkOverflow}px`,
+    )
   })
 
   await check('skip link targets the main landmark', async () => {

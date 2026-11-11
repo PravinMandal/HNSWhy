@@ -63,6 +63,23 @@ describe('UploadDialog', () => {
     expect(apiMocks.upload).not.toHaveBeenCalled()
   })
 
+  it('clears a file error when the user switches to pasted text', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    fireEvent.change(fileInput(), {
+      target: { files: [new File(['PK'], 'archive.zip', { type: 'application/zip' })] },
+    })
+    expect(screen.getByText('Choose a PDF, Markdown, or plain-text file.')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Paste text/ }))
+
+    expect(
+      screen.queryByText('Choose a PDF, Markdown, or plain-text file.'),
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: /^Text/ })).not.toHaveAttribute('aria-invalid')
+  })
+
   it('uploads a valid file and reports the indexed document', async () => {
     const user = userEvent.setup()
     apiMocks.upload.mockResolvedValue(summary)

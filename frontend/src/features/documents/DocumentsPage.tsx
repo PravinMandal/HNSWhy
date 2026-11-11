@@ -100,8 +100,8 @@ export function DocumentsPage() {
         <MetricCard
           icon="documents"
           label="Documents"
-          value={formatNumber(documents.length)}
-          detail="in this library"
+          value={loading && documents.length === 0 ? '—' : formatNumber(documents.length)}
+          detail={loading && documents.length === 0 ? 'loading documents' : 'in this library'}
         />
         <MetricCard
           icon="layers"
@@ -154,7 +154,9 @@ export function DocumentsPage() {
           description={
             documents.length
               ? `${pluralize(documents.length, 'document')} · ${pluralize(status?.store.chunks ?? 0, 'chunk')}`
-              : 'Nothing here yet'
+              : loading
+                ? 'Loading documents…'
+                : 'Nothing here yet'
           }
           action={
             <label className="search">

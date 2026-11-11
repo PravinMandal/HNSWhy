@@ -145,6 +145,35 @@ HNSWHY_TEST(chunker_reports_missing_pdftotext) {
     }
 }
 
+HNSWHY_TEST(chunker_rejects_documents_over_max_chunks) {
+    hnswhy::ChunkOptions options;
+    options.target_words = 2;
+    options.overlap_words = 0;
+    options.max_chunks = 2;
+    CHECK_EQ(hnswhy::chunk_text("one two three four", options).size(), std::size_t{2});
+    try {
+        (void)hnswhy::chunk_text("one two three four five six", options);
+        CHECK(false);
+    } catch (const hnswhy::ProductError& error) {
+        CHECK_EQ(error.code(), std::string("DOCUMENT_TOO_LARGE"));
+        CHECK_EQ(error.status(), 422);
+    }
+}
+
+HNSWHY_TEST(chunker_rejects_uploads_over_twenty_megabytes) {
+    const std::string over(20U * 1024U * 1024U + 1, 'a');
+    try {
+        (void)hnswhy::extract_text(over, "big.txt", "text/plain");
+        CHECK(false);
+    } catch (const hnswhy::ProductError& error) {
+        CHECK_EQ(error.code(), std::string("DOCUMENT_TOO_LARGE"));
+        CHECK_EQ(error.status(), 413);
+    }
+    // The limit is inclusive: exactly 20 MB is still a valid upload.
+    const std::string exact(20U * 1024U * 1024U, 'a');
+    CHECK_EQ(hnswhy::extract_text(exact, "big.txt", "text/plain").size(), exact.size());
+}
+
 HNSWHY_TEST(text_validates_utf8_and_truncates_at_codepoint_boundaries) {
     CHECK(hnswhy::is_valid_utf8("plain ASCII"));
     CHECK(hnswhy::is_valid_utf8("café 中文 😀"));

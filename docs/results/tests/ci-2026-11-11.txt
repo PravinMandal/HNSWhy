@@ -1,0 +1,7 @@
+Test project /home/pravin/Projects/A dream path/Projects/HNSWhy/build/ci
+    Start 1: hns_tests
+1/1 Test #1: hns_tests ........................   Passed    3.15 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =   3.16 sec

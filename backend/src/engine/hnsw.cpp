@@ -359,6 +359,7 @@ void HNSW::recomputeConnectivity() {
     if (slot_count_ == 0 || live_count_ == 0) {
         layer0_connected_ = true;
         layer0_dirty_ = false;
+        unreachable_live_.clear();
         return;
     }
     std::vector<std::uint8_t> seen(slot_count_, 0);
@@ -380,14 +381,42 @@ void HNSW::recomputeConnectivity() {
         }
     }
     layer0_connected_ = reached_live == live_count_;
+    unreachable_live_.clear();
+    if (!layer0_connected_) {
+        unreachable_live_.reserve(live_count_ - reached_live);
+        for (Slot id = 0; id < slot_count_; ++id) {
+            if (!deleted_[id] && !seen[id]) {
+                unreachable_live_.push_back(id);
+            }
+        }
+    }
     layer0_dirty_ = false;
 }
 
+void HNSW::requireUsable() const {
+    if (poisoned_) {
+        throw std::logic_error(
+            "HNSW: graph is unusable after a failed insertion; rebuild it");
+    }
+}
+
 void HNSW::insert(Slot id) {
+    requireUsable();
     if (id >= store_.size()) {
         throw std::out_of_range("HNSW::insert: slot not in store");
     }
+    if (id != slot_count_) {
+        throw std::logic_error("HNSW::insert: insertion must be append-only");
+    }
+    try {
+        insertImpl(id);
+    } catch (...) {
+        poisoned_ = true;
+        throw;
+    }
+}
 
+void HNSW::insertImpl(Slot id) {
     const int level = sampleLevel();
     ensureNode(id, level);
 
@@ -405,6 +434,12 @@ void HNSW::insert(Slot id) {
     const std::span<const float> query = store_.get(id);
     Slot entry = entry_;
 
+    // The connectivity cache is only safe to keep when it was trustworthy
+    // before this insert and the insert cannot have changed reachability.
+    const bool connectivity_was_trusted = layer0_connected_ && !layer0_dirty_;
+    const bool became_entry = level > top_level_;
+    bool layer0_parent_is_live = true;
+
     for (int layer = top_level_; layer > level; --layer) {
         entry = greedySearchLayer(query, entry, layer);
     }
@@ -420,6 +455,16 @@ void HNSW::insert(Slot id) {
         }
 
         const std::vector<Slot> selected = selectNeighbours(id, candidates, cap(layer));
+        if (layer == 0) {
+            // A tombstoned parent may be outside the live component. An edge
+            // from it does not prove the new node is reachable from entry_.
+            for (const Slot neighbour : selected) {
+                if (deleted_[neighbour]) {
+                    layer0_parent_is_live = false;
+                    break;
+                }
+            }
+        }
         connect(id, selected, layer);
         entry = candidates.front().id;
     }
@@ -429,22 +474,28 @@ void HNSW::insert(Slot id) {
     for (int layer = 0; layer <= level; ++layer) {
         ++level_count_[static_cast<std::size_t>(layer)];
     }
-    if (level > top_level_) {
+    if (became_entry) {
         entry_ = id;
         top_level_ = level;
     }
 
-    // A successful insert only proves the new node can be reached from the
-    // layer-0 beam entry. Upper-layer descent may have chosen that entry from a
-    // different part of the graph than entry_, so this does not prove every
-    // live node is reachable from entry_ along layer-0 edges. Mark the cached
-    // reachability stale; the next search recomputes it once. A wrong
-    // "connected" answer would skip the exact fallback and could return a
-    // truncated or incorrect top-k.
-    layer0_dirty_ = true;
+    // An insert can invalidate reachability in three ways: it becomes the new
+    // entry (the old entry is not necessarily reachable from it), it gets no
+    // incoming layer-0 edge, or its only parents are tombstones outside the
+    // live component. Pruning a full neighbour's back-edge is handled by
+    // noteEdgeRemoved(), which dirties the cache itself. When none of those
+    // happened and the graph was connected, every parent is live and reachable
+    // from entry_, so the new node is reachable too and the cached answer
+    // stays sound. Skipping the dirty flag keeps the normal upload-then-search
+    // path from paying an O(N) reachability walk after every insert.
+    if (!connectivity_was_trusted || became_entry || in_degree0_[id] == 0 ||
+        !layer0_parent_is_live) {
+        layer0_dirty_ = true;
+    }
 }
 
 void HNSW::build() {
+    requireUsable();
     if (slot_count_ != 0) {
         throw std::logic_error("HNSW::build: graph is not empty");
     }
@@ -455,6 +506,7 @@ void HNSW::build() {
 }
 
 void HNSW::remove(Slot id) {
+    requireUsable();
     if (id >= slot_count_) {
         throw std::out_of_range("HNSW::remove: slot out of range");
     }
@@ -476,6 +528,7 @@ bool HNSW::isDeleted(Slot id) const {
 }
 
 SearchResult HNSW::search(std::span<const float> query, std::size_t k, std::size_t ef) {
+    requireUsable();
     SearchResult result;
     if (k == 0 || slot_count_ == 0) {
         return result;
@@ -490,33 +543,6 @@ SearchResult HNSW::search(std::span<const float> query, std::size_t k, std::size
     const std::uint64_t distances_before = distance_computations_;
     const std::uint64_t hops_before = hops_;
 
-    // A disconnected layer 0 cannot be trusted for top-k: a graph component
-    // reachable from the entry point may not contain the query's true nearest
-    // neighbours. Fall back to an exact scan for those degenerate graphs so
-    // results stay exact and prefix-consistent across k.
-    if (!layer0_connected_) {
-        ++result.stats.exact_fallbacks;
-        std::vector<Candidate> all;
-        all.reserve(live_count_);
-        for (Slot id = 0; id < slot_count_; ++id) {
-            if (deleted_[id] == 0) {
-                all.push_back(Candidate{distanceTo(query, id), id});
-            }
-        }
-        std::sort(all.begin(), all.end(),
-                  [](const Candidate& a, const Candidate& b) { return closer(a, b); });
-        const std::size_t take = std::min(k, all.size());
-        result.ids.reserve(take);
-        result.distances.reserve(take);
-        for (std::size_t i = 0; i < take; ++i) {
-            result.ids.push_back(all[i].id);
-            result.distances.push_back(all[i].dist);
-        }
-        result.stats.distance_computations = distance_computations_ - distances_before;
-        result.stats.hops = static_cast<std::uint32_t>(hops_ - hops_before);
-        return result;
-    }
-
     Slot entry = entry_;
     for (int layer = top_level_; layer > 0; --layer) {
         entry = greedySearchLayer(query, entry, layer);
@@ -524,10 +550,46 @@ SearchResult HNSW::search(std::span<const float> query, std::size_t k, std::size
     }
 
     const std::size_t ef_effective = std::min(std::max(ef, k), slot_count_);
-    const std::array<Slot, 1> entry_array{entry};
-    std::vector<Candidate> candidates =
-        searchLayer(query, entry_array, ef_effective, 0, true);
+    // On a connected graph the descent result is the only useful start. On a
+    // disconnected one it can sit in a different layer-0 component than
+    // entry_; seeding from entry_ too makes the beam cover the component that
+    // the fallback below treats as reachable, so the other component is not
+    // invisible to the graph walk. searchLayer() deduplicates when the two ids
+    // are equal.
+    const std::array<Slot, 2> entry_array{entry, entry_};
+    const std::span<const Slot> entries =
+        layer0_connected_ ? std::span<const Slot>(entry_array.data(), 1)
+                          : std::span<const Slot>(entry_array.data(), 2);
+    std::vector<Candidate> candidates = searchLayer(query, entries, ef_effective, 0, true);
     ++result.stats.layer_visits;
+
+    bool used_exact_scan = false;
+
+    // A disconnected layer 0 cannot be trusted for top-k on its own: a live
+    // node outside the reachable component is invisible to the beam. Scan
+    // exactly the unreachable live slots, not every vector, and merge them in.
+    // Tie-heavy graphs usually strand only a few nodes, so the common search
+    // path stays approximate and cheap.
+    //
+    // The beam can still visit one of those slots: its starting point comes
+    // from the upper-layer descent and may sit in a different layer-0
+    // component than entry_. Deduplicate before merging, or that component is
+    // returned twice.
+    if (!layer0_connected_ && !unreachable_live_.empty()) {
+        used_exact_scan = true;
+        std::vector<Slot> beam_ids;
+        beam_ids.reserve(candidates.size());
+        for (const Candidate& candidate : candidates) {
+            beam_ids.push_back(candidate.id);
+        }
+        std::sort(beam_ids.begin(), beam_ids.end());
+        candidates.reserve(candidates.size() + unreachable_live_.size());
+        for (const Slot id : unreachable_live_) {
+            if (!std::binary_search(beam_ids.begin(), beam_ids.end(), id)) {
+                candidates.push_back(Candidate{distanceTo(query, id), id});
+            }
+        }
+    }
 
     // Tie-heavy graphs (duplicates, one-hot vectors) can be disconnected: a
     // node inserted after the layer-0 degree cap may have no incoming edge.
@@ -535,7 +597,7 @@ SearchResult HNSW::search(std::span<const float> query, std::size_t k, std::size
     // (min(k, live) results) without turning normal searches into a scan.
     const std::size_t target = std::min(k, live_count_);
     if (candidates.size() < target) {
-        ++result.stats.exact_fallbacks;
+        used_exact_scan = true;
         std::vector<std::uint8_t> seen(slot_count_, 0);
         for (const Candidate& candidate : candidates) {
             seen[candidate.id] = 1;
@@ -547,24 +609,40 @@ SearchResult HNSW::search(std::span<const float> query, std::size_t k, std::size
             }
             candidates.push_back(Candidate{distanceTo(query, id), id});
         }
-        std::sort(candidates.begin(), candidates.end(),
-                  [](const Candidate& a, const Candidate& b) { return closer(a, b); });
     }
 
     const std::size_t take = std::min(k, candidates.size());
-    result.ids.reserve(take);
-    result.distances.reserve(take);
-    for (std::size_t i = 0; i < take; ++i) {
-        result.ids.push_back(candidates[i].id);
-        result.distances.push_back(candidates[i].dist);
+    if (candidates.size() > take) {
+        // Keep the k best without sorting the whole candidate set. A
+        // disconnected graph can contribute many exact candidates, and a full
+        // sort there made the fallback slower than the brute-force engine it
+        // was standing in for.
+        std::nth_element(candidates.begin(), candidates.begin() + take, candidates.end(),
+                         [](const Candidate& a, const Candidate& b) { return closer(a, b); });
+        candidates.resize(take);
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b) { return closer(a, b); });
+
+    result.ids.reserve(candidates.size());
+    result.distances.reserve(candidates.size());
+    for (const Candidate& candidate : candidates) {
+        result.ids.push_back(candidate.id);
+        result.distances.push_back(candidate.dist);
     }
 
+    if (used_exact_scan) {
+        // One per query that needed a fallback, not one per scan: a query can
+        // use both the disconnected merge and the short-result completion.
+        ++result.stats.exact_fallbacks;
+    }
     result.stats.distance_computations = distance_computations_ - distances_before;
     result.stats.hops = static_cast<std::uint32_t>(hops_ - hops_before);
     return result;
 }
 
 std::size_t HNSW::reachableCount(int layer) const {
+    requireUsable();
     if (slot_count_ == 0 || layer < 0 || layer > top_level_) {
         return 0;
     }
@@ -593,6 +671,7 @@ std::size_t HNSW::reachableCount(int layer) const {
 }
 
 void HNSW::validate() const {
+    requireUsable();
     if (slot_count_ == 0) {
         if (entry_ != kInvalidSlot || top_level_ != -1) {
             throw std::runtime_error("HNSW::validate: empty graph has an entry point");

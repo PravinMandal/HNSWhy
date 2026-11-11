@@ -1,0 +1,11 @@
+SILENT WRONG seed=100 step=0 slot=36 got=61 dist=3.615903616 fallbacks=0 entry=33 top=3 live=166
+SILENT WRONG seed=100 step=1 slot=36 got=61 dist=3.615903616 fallbacks=0 entry=33 top=3 live=166
+SILENT WRONG seed=100 step=2 slot=36 got=61 dist=3.615903616 fallbacks=0 entry=33 top=3 live=165
+SILENT WRONG seed=100 step=3 slot=36 got=61 dist=3.615903616 fallbacks=0 entry=33 top=3 live=165
+SILENT WRONG seed=100 step=4 slot=36 got=61 dist=3.615903616 fallbacks=0 entry=33 top=3 live=164
+SILENT WRONG seed=100 step=5 slot=36 got=61 dist=3.615903616 fallbacks=0 entry=33 top=3 live=165
+SILENT WRONG seed=100 step=6 slot=36 got=61 dist=3.615903616 fallbacks=0 entry=33 top=3 live=165
+SILENT WRONG seed=100 step=7 slot=36 got=61 dist=3.615903616 fallbacks=0 entry=33 top=3 live=166
+SILENT WRONG seed=100 step=8 slot=36 got=61 dist=3.615903616 fallbacks=0 entry=33 top=3 live=167
+SILENT WRONG seed=100 step=9 slot=36 got=61 dist=3.615903616 fallbacks=0 entry=33 top=3 live=168
+SILENT WRONG seed=100 step=10 slot=36 got=61 dist=3.615903616 fallbacks=0 entry=33 top=3 live=168

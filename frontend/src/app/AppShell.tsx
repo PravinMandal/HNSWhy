@@ -30,20 +30,31 @@ export function AppShell({
     return () => media.removeEventListener('change', onChange)
   }, [])
 
-  useEffect(() => {
-    setMobileOpen(false)
-  }, [route])
-
-  // SPA navigation replaces the whole page, so update the document title and
-  // move focus to the new page heading. Without this, keyboard and screen
-  // reader users stay parked on the sidebar link they just activated.
+  // Closing the drawer on navigation and focusing the new heading have to
+  // happen in this order: while the drawer is open the workspace is inert, so
+  // focusing the heading immediately would be a no-op. The flag also tells the
+  // drawer cleanup not to pull focus back to the menu button.
+  const pendingRouteFocus = useRef(false)
   const firstRoute = useRef(true)
+
   useEffect(() => {
     document.title = `${routeLabels[route]} · HNSWhy`
     if (firstRoute.current) {
       firstRoute.current = false
       return
     }
+    pendingRouteFocus.current = true
+    setMobileOpen(false)
+  }, [route])
+
+  // SPA navigation replaces the whole page, so move focus to the new page
+  // heading once the drawer is out of the way. Without this, keyboard and
+  // screen reader users stay parked on the navigation they just activated.
+  useEffect(() => {
+    if (!pendingRouteFocus.current || mobileOpen) {
+      return
+    }
+    pendingRouteFocus.current = false
     const main = document.getElementById('main-content')
     const heading = main?.querySelector<HTMLElement>('h1')
     if (heading) {
@@ -53,7 +64,7 @@ export function AppShell({
       main?.focus({ preventScroll: true })
     }
     window.scrollTo({ top: 0, behavior: scrollBehavior() })
-  }, [route])
+  }, [route, mobileOpen])
 
   useEffect(() => {
     if (!isMobile || !mobileOpen) {
@@ -95,6 +106,11 @@ export function AppShell({
     document.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('keydown', onKeyDown)
+      // A route change is closing the drawer to show a new page; the focus
+      // effect above owns focus in that case.
+      if (pendingRouteFocus.current) {
+        return
+      }
       const restore =
         previousFocus && previousFocus !== document.body && !sidebar?.contains(previousFocus)
           ? previousFocus

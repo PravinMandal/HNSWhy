@@ -148,9 +148,16 @@ function SourceCard({
         <Icon name="chevronDown" size={16} className={expanded ? 'is-open' : undefined} />
       </button>
       <p className="source__text">{expanded ? source.text : truncate(source.text, 230)}</p>
-      {!expanded && source.text.length > 230 ? (
-        <button type="button" className="source__more" onClick={onToggle}>
-          Show full chunk
+      {source.text.length > 230 ? (
+        // Keep this control mounted while the card expands. Unmounting it
+        // would drop keyboard focus to <body> right after activation.
+        <button
+          type="button"
+          className="source__more"
+          onClick={onToggle}
+          aria-expanded={expanded}
+        >
+          {expanded ? 'Show less' : 'Show full chunk'}
         </button>
       ) : null}
     </article>

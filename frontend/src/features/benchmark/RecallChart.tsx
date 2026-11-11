@@ -47,12 +47,18 @@ export function RecallChart({
 
   return (
     <figure className="chart">
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="chart__svg"
-        role="group"
-        aria-label="Interactive recall chart. Each efSearch has its own button; values are also in the results table."
+      <div
+        className="chart__scroll"
+        tabIndex={0}
+        role="region"
+        aria-label="Recall chart. Scroll horizontally on narrow screens; every value is also in the results table."
       >
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="chart__svg"
+          role="group"
+          aria-label="Interactive recall chart. Each efSearch has its own button; values are also in the results table."
+        >
         {ticks.map((tick) => (
           <g key={tick}>
             <line
@@ -152,7 +158,8 @@ export function RecallChart({
             </circle>
           </g>
         ))}
-      </svg>
+        </svg>
+      </div>
 
       <figcaption className="chart__legend">
         <span>

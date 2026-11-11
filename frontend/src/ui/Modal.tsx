@@ -104,7 +104,14 @@ export function Modal({
       if (root && !rootWasInert) {
         root.removeAttribute('inert')
       }
-      previousFocus?.focus()
+      // A destructive action can remove the trigger from the DOM before the
+      // dialog closes (the deleted row is gone). Focusing a detached node is a
+      // no-op that leaves focus on <body>, so fall back to the main landmark.
+      if (previousFocus?.isConnected) {
+        previousFocus.focus()
+      } else {
+        document.getElementById('main-content')?.focus({ preventScroll: true })
+      }
     }
   }, [open, initialFocusRef])
 

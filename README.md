@@ -165,6 +165,12 @@ Open <http://127.0.0.1:8080>. On a fresh database with the offline hash embedder
 (the default), the server seeds the sample knowledge base from `samples/`. It never
 overwrites an existing library. Use `--no-sample` to start empty.
 
+The server accepts loopback `Host` names and rejects anything else with
+`403 FORBIDDEN_HOST`. If you bind to a LAN address or put it behind a proxy, add the
+names clients use with `HNSWHY_ALLOWED_HOSTS=hnswhy.example,192.168.1.20` or a
+repeatable `--allowed-host` flag. State-changing requests from another origin are
+also rejected. These are transport guards, not authentication.
+
 For frontend development, run the API on port 8080 and Vite separately:
 
 ```bash
@@ -226,7 +232,7 @@ fallback is required.
 ## Tests
 
 ```bash
-# Release suite (143 tests; the committed sift10k fixture always runs,
+# Release suite (165 tests; the committed sift10k fixture always runs,
 # siftsmall runs when the dataset is present)
 HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall" ./build/backend/hns_tests
 
@@ -235,7 +241,7 @@ cmake --preset dev
 cmake --build --preset dev
 HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall" ./build/dev/backend/hns_tests
 
-# Frontend unit tests (15 files, 55 tests)
+# Frontend unit tests (17 files, 67 tests)
 cd frontend && npm test
 
 # End-to-end: fresh database, real server, real browser
@@ -244,10 +250,11 @@ scripts/e2e/run.sh
 
 Coverage includes squared-L2 distance, `VectorStore` invariants, exact search,
 HNSW insertion orders, duplicate vectors, pruning, deletion/tombstones, restart
-persistence, chunking, provider behavior, RAG citations, the HTTP API, report schema,
-and real siftsmall recall. The frontend tests cover routing, the data provider,
+persistence, chunking, provider behavior, RAG citations, the HTTP API (including
+Host/Origin guards and static-path traversal), report schema, and real siftsmall
+recall. The frontend tests cover routing, the data provider,
 theme persistence, dialogs, formatting, PCA, and page behaviour. The end-to-end
-suite runs 25 API checks and 16 browser checks against a fresh database; it also
+suite runs 26 API checks and 16 browser checks against a fresh database; it also
 asserts that the production stylesheet is actually applied, so a broken static
 asset cannot pass as a working page.
 
@@ -290,7 +297,8 @@ benchmark during a request.
 - Deletion leaves tombstones in memory; physical compaction is deferred.
 - The benchmark is SIFT-100k, not 1M.
 - Squared L2 only; product embeddings are normalized so L2 ranking equals cosine.
-- No auth. Run it locally or behind a trusted access gate.
+- No auth. Run it locally or behind a trusted access gate. Host allowlisting and
+  cross-site write rejection stop browser-driven misuse, not a direct client.
 - Uploaded text is trusted input; prompt-injection hardening is out of scope.
 - Benchmark numbers are local to the recorded machine, not cloud guarantees.
 

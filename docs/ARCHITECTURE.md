@@ -261,7 +261,7 @@ public:
     void build();
     void insert(Slot id);
     void remove(Slot id);              // mark-deleted
-    SearchResult search(std::span<const float> query, size_t k, size_t ef) const;
+    SearchResult search(std::span<const float> query, size_t k, size_t ef);
     void validate() const;
 
     size_t size() const;               // live vectors
@@ -269,7 +269,7 @@ public:
     bool isDeleted(Slot id) const;
 
 private:
-    Slot greedySearchLayer(std::span<const float> query, Slot entry, int layer) const;
+    Slot greedySearchLayer(std::span<const float> query, Slot entry, int layer);
     std::vector<Candidate> searchLayer(std::span<const float> query,
                                        std::span<const Slot> entries,
                                        size_t ef, int layer,
@@ -431,14 +431,26 @@ stretch item with its own decision and corruption test.
 - **Brute force.** Scan every slot in the store, keep a max-heap of size `k`. This is
   the answer key for recall, tests, and benchmark ground truth. The product searches
   HNSW, not brute force as a second path. If a built graph's layer 0 is disconnected,
-  `HNSW::search` falls back to an exact scan of live vectors so recall does not
-  silently collapse; the fallback is a repair path, not the normal path. The cached
-  connectivity answer is invalidated after every insert and every removed edge, so a
-  stale "connected" flag cannot skip the fallback.
+  `HNSW::search` scans exactly the live slots the graph walk cannot reach and merges
+  them into the result, so recall does not silently collapse and the fallback cost
+  grows with the stranded set, not with N. In that mode the layer-0 beam starts from
+  both the last upper-layer node and `entry_`, because upper-layer descent can land in
+  a different component. `stats.exact_fallbacks` counts queries that needed a fallback,
+  not scans. The fallback is a repair path, not the normal path. The cached
+  connectivity answer is invalidated after every structural change that can affect
+  it — an insert that becomes the entry, has no live incoming edge, or follows a
+  removed edge, and every deletion — so a stale "connected" flag could not skip the
+  fallback.
+- **Exception safety.** Public `insert()` checks its preconditions (the slot is in
+  the store and the insert is append-only) before touching the graph. If the
+  insertion body throws after that point, the graph is marked unusable and every
+  later operation throws a `std::logic_error` telling the caller to rebuild. A bad
+  caller argument does not poison a healthy graph.
 - **HNSW.** Layered proximity graph. Layer 0 contains every node; upper layers are
   sparse shortcuts. Greedy descent above layer 0, beam search at layer 0.
 - **Layer 0 storage.** `N * M0` `uint32_t` links plus a `uint16_t` degree per node.
-  Pruning swap-erases within the node's fixed slots. No CSR.
+  Pruning overwrites the node's fixed slots in order with `std::copy`; it does not
+  swap-erase. No CSR.
 - **Growth.** `VectorStore` and the HNSW adjacency arrays grow geometrically on insert;
   old slot IDs and links stay valid. Do not rebuild the index on every upload.
 - **Upper layers.** Sparse; a small vector per node or per-layer slabs. The layer-0
@@ -555,9 +567,28 @@ Validation rules:
 - `DELETE /api/documents/{id}`: return `404` if the document does not exist; otherwise
   delete and return `{ "deleted": true }`.
 
-There is no auth in v1. The README must say the demo is for a local or trusted
+There is no user auth in v1. The README must say the demo is for a local or trusted
 environment, not a public multi-tenant service. If it is deployed publicly, put it
-behind a simple access gate or accept that anyone can upload and delete documents.
+behind a simple access gate or accept that anyone who can reach it can upload and
+delete documents. The transport-level guards below are not a substitute for auth;
+they only stop a browser on another site from driving this API.
+
+Transport guards, applied before routing:
+
+- **Host allowlist.** A missing `Host` returns `400 MISSING_HOST`; a name outside
+  the allowlist returns `403 FORBIDDEN_HOST`. The allowlist always contains
+  `localhost`, `127.0.0.1`, and `::1`, plus the concrete bind host. Add LAN or
+  reverse-proxy names with `HNSWHY_ALLOWED_HOSTS` (comma-separated) or a repeatable
+  `--allowed-host`. This blocks DNS-rebinding pages that resolve their own name to
+  loopback.
+- **Cross-site writes.** `POST`/`PUT`/`PATCH`/`DELETE` reject a `Sec-Fetch-Site`
+  that is not `same-origin` or `none`, and an `Origin` whose authority does not
+  match the request `Host`, with `403 CROSS_SITE_REQUEST`.
+- **Files.** The server sets `umask(0077)` and pre-creates the database at `0600`
+  before taking the single-writer lock, so SQLite, WAL, SHM, temporary PDFs, and
+  logs are owner-only.
+- **PDF extraction.** At most two `pdftotext` children run at once (a 5 s wait
+  returns `503 SERVER_BUSY`); each gets `ulimit -v`, `ulimit -t`, and `timeout`.
 
 ---
 
@@ -642,7 +673,8 @@ Failure behavior:
 | Ollama not running | `/api/ask` and upload return `503` with a fixable message |
 | Ollama timeout | request fails after the configured timeout; server stays up |
 | SQLite write fails | transaction rolls back; no partial document |
-| Graph insert fails after DB commit | return error and rebuild the in-memory index from SQLite |
+| Graph insert fails after DB commit | return error and rebuild the in-memory index from SQLite; the failed graph is poisoned until rebuilt |
+| PDF extractor busy (two in flight) | `503 SERVER_BUSY`; the client retries |
 | Benchmark file missing | Benchmark tab shows instructions, not a fake chart |
 | Embedding dimension mismatch | reject the document with a clear error |
 | Empty question | `400` with a validation message |
@@ -746,7 +778,7 @@ URLs. Ollama is optional at runtime.
 | `test_distance` | squared L2, normalization, and invalid-dimension handling |
 | `test_vector_store` | add/get/reserve; dimension checks; contiguous storage |
 | `test_brute_force` | exact top-k; ties deterministic by slot |
-| `test_hnsw` | insert/search, insertion orders, duplicates, empty graphs, stale-connectivity regression, invariants |
+| `test_hnsw` | insert/search, insertion orders, duplicates, empty graphs, stale-connectivity regression, exception poisoning, invariants |
 | `test_prune` | two-cluster diversity test; nearest-only disconnects, heuristic keeps a bridge |
 | `test_delete` | tombstones never returned; traversal survives; entry/top-layer safety |
 | `test_metrics` | recall and latency percentiles |
@@ -757,12 +789,12 @@ URLs. Ollama is optional at runtime.
 | Test | What it proves |
 |---|---|
 | `test_chunker` | word-boundary chunks, overlap, short input |
-| `test_document_store` | schema, transactions, cascade deletes, metadata, sampling |
-| `test_providers` | hash, extractive, Ollama/OpenAI request and error paths |
+| `test_document_store` | schema, transactions, cascade deletes, metadata, sampling, batched chunk lookup |
+| `test_providers` | hash, extractive, Ollama/OpenAI request and error paths, index range checks |
 | `test_vector_index` | slot mapping, incremental insert, tombstone delete, rebuild |
 | `test_rag` | retrieval, grounded prompt, citations, refusal |
-| `test_persistence` | insert -> restart -> rebuild -> same results; sample seeded once |
-| `test_api` | upload/ask/map/delete flow, multipart, PDF, 415 validation, errors |
+| `test_persistence` | insert -> restart -> rebuild -> same results; sample seeded once; skipped seed retried; concurrent ask/upload |
+| `test_api` | upload/ask/map/delete flow, multipart, PDF, 415 validation, Host/Origin guards, static traversal, errors |
 | `test_bench` | fvecs/ivecs parsing, report schema |
 | `test_cli` | benchmark numeric parsing rejects signs, junk, and overflow |
 | `test_config` | M0 derivation, environment overrides, API-key scoping |
@@ -774,14 +806,14 @@ URLs. Ollama is optional at runtime.
 The committed sift10k fixture gate always runs. Siftsmall integration tests skip
 unless `HNSWHY_SIFTSMALL_DIR` points at a local dataset. Release verification on this
 machine runs the same suite with `HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall"`:
-**143/143 pass**. The frontend suite is **55 tests in 15 files**.
+**165/165 pass**. The frontend suite is **67 tests in 17 files**.
 
 The `dev` preset enables ASan and UBSan. The full suite is sanitizer-clean.
 
 ### 11.4 End-to-end
 
 `scripts/e2e/run.sh` builds if needed, starts the real server on a fresh SQLite
-database, runs `api-e2e.sh` (25 HTTP checks), then runs `ui-e2e.cjs` (16 browser
+database, runs `api-e2e.sh` (26 HTTP checks), then runs `ui-e2e.cjs` (16 browser
 checks) and stops the server. The browser suite uses the built `frontend/dist`
 bundle, not the Vite dev server, and asserts that the production stylesheet is
 loaded. Screenshots and logs are written under `$OUT`; the committed evidence is
@@ -821,7 +853,7 @@ measured separately. Do not mix them.
 | Persistence | SQLite source of truth; incremental insert; tombstones; rebuild on startup |
 | Engine | flat store, squared L2, brute force, HNSW insert/search/prune, mark-deleted |
 | Evidence | SIFT-100k, 10k queries, 3 passes per curve point, `bench.json`, README table |
-| Safety | 143 tests, two-cluster test, siftsmall recall gate, persistence test, ASan/UBSan, 25 API + 16 browser E2E checks |
+| Safety | 165 tests, two-cluster test, siftsmall recall gate, persistence test, ASan/UBSan, 26 API + 16 browser E2E checks |
 | Ops | documented local run, `.env.example`, sample KB, no auth |
 
 ### Stretch (after v1)

@@ -151,7 +151,9 @@ HNSWHY_TEST(hnsw_tie_heavy_search_returns_all_live_vectors) {
     duplicate_graph.validate();
     const hnswhy::SearchResult all_duplicates = duplicate_graph.search(zero, n, n);
     CHECK_EQ(all_duplicates.ids.size(), n);
-    CHECK(all_duplicates.stats.exact_fallbacks > 0);
+    // exact_fallbacks counts queries that used a fallback, not the number of
+    // fallback scans inside one query.
+    CHECK_EQ(all_duplicates.stats.exact_fallbacks, std::uint32_t{1});
     for (const float distance : all_duplicates.distances) {
         CHECK_NEAR(distance, 0.0, 0.0);
     }
@@ -170,7 +172,7 @@ HNSWHY_TEST(hnsw_tie_heavy_search_returns_all_live_vectors) {
     one_hot_graph.build();
     const hnswhy::SearchResult all_one_hot = one_hot_graph.search(one_hot.get(0), n, n);
     CHECK_EQ(all_one_hot.ids.size(), n);
-    CHECK(all_one_hot.stats.exact_fallbacks > 0);
+    CHECK_EQ(all_one_hot.stats.exact_fallbacks, std::uint32_t{1});
     CHECK_EQ(all_one_hot.ids.front(), hnswhy::Slot{0});
     CHECK_NEAR(all_one_hot.distances.front(), 0.0, 0.0);
 }
@@ -283,6 +285,23 @@ HNSWHY_TEST(hnsw_incremental_insert_after_connected_removals_rechecks_reachabili
     CHECK_EQ(result.ids.size(), std::size_t{1});
     CHECK_EQ(result.ids.front(), added);
     CHECK_EQ(result.stats.exact_fallbacks > 0, disconnected);
+}
+
+HNSWHY_TEST(hnsw_rejects_an_invalid_insert_without_poisoning_the_graph) {
+    const hnswhy::VectorStore store = make_random_store(30, 5, 77);
+    hnswhy::HNSW graph(store, small_params());
+    graph.build();
+    graph.validate();
+
+    // A caller error before any mutation must not mark the graph unusable.
+    try {
+        graph.insert(static_cast<hnswhy::Slot>(store.size() + 1));
+        CHECK(false);
+    } catch (const std::out_of_range&) {
+    }
+    graph.validate();
+    const hnswhy::SearchResult result = graph.search(store.get(0), 3, 30);
+    CHECK_EQ(result.ids.size(), std::size_t{3});
 }
 
 HNSWHY_TEST(hnsw_is_deterministic_for_the_same_seed) {
@@ -452,6 +471,31 @@ HNSWHY_TEST(hnsw_back_edge_prune_keeps_the_new_node) {
     CHECK_EQ(result.ids.size(), std::size_t{1});
     CHECK_EQ(result.ids.front(), hnswhy::Slot{32});
     CHECK_NEAR(result.distances.front(), 0.0, 0.0);
+}
+
+HNSWHY_TEST(hnsw_validate_holds_after_every_incremental_change) {
+    // The spec asks for validate() after each insert and remove in small
+    // tests. A single check at the end can miss drift that a later operation
+    // repairs by accident.
+    constexpr std::size_t n = 50;
+    hnswhy::VectorStore store;
+    store.reserve(n, 5);
+    hnswhy::HNSW graph(store, small_params());
+    std::mt19937 rng(31);
+    std::uniform_real_distribution<float> uniform(-1.0f, 1.0f);
+    for (std::size_t i = 0; i < n; ++i) {
+        std::vector<float> row(5);
+        for (float& value : row) {
+            value = uniform(rng);
+        }
+        store.add(row);
+        graph.insert(static_cast<hnswhy::Slot>(i));
+        graph.validate();
+    }
+    for (hnswhy::Slot id = 0; id < n; id += 2) {
+        graph.remove(id);
+        graph.validate();
+    }
 }
 
 HNSWHY_TEST(hnsw_empty_default_store_returns_empty) {

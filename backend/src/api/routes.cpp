@@ -7,6 +7,7 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 
 #include "json.hpp"
 #include "product/chunker.h"
@@ -63,6 +64,68 @@ std::string trimmed_lowercase(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return text;
+}
+
+// Host header values look like "example.com", "example.com:8080", "[::1]", or
+// "[::1]:8080". Return only the hostname so the allowlist is independent of the
+// port the request happened to use.
+std::string host_name_of(std::string authority) {
+    authority = trimmed_lowercase(std::move(authority));
+    while (!authority.empty() && authority.back() == '.') {
+        authority.pop_back();
+    }
+    if (authority.empty()) {
+        return {};
+    }
+    if (authority.front() == '[') {
+        const std::size_t close = authority.find(']');
+        if (close == std::string::npos) {
+            return {};
+        }
+        return authority.substr(1, close - 1);
+    }
+    const std::size_t colon = authority.find(':');
+    if (colon != std::string::npos && authority.find(':', colon + 1) == std::string::npos) {
+        authority.resize(colon);
+    }
+    return authority;
+}
+
+// "http://127.0.0.1:8080" -> "127.0.0.1:8080". An Origin without a scheme (or
+// the literal "null") is not a same-origin browser request.
+std::string origin_authority(const std::string& origin) {
+    const std::string normalized = trimmed_lowercase(origin);
+    const std::size_t scheme = normalized.find("://");
+    if (scheme == std::string::npos) {
+        return {};
+    }
+    std::string authority = normalized.substr(scheme + 3);
+    const std::size_t slash = authority.find('/');
+    if (slash != std::string::npos) {
+        authority.resize(slash);
+    }
+    return authority;
+}
+
+std::unordered_set<std::string> host_allowlist(const AppConfig& config) {
+    std::unordered_set<std::string> allowed{"localhost", "127.0.0.1", "::1"};
+    const auto add = [&allowed](const std::string& value) {
+        const std::string host = host_name_of(value);
+        // A wildcard bind address is not a name a browser can put in Host.
+        if (!host.empty() && host != "0.0.0.0" && host != "::") {
+            allowed.insert(host);
+        }
+    };
+    add(config.host);
+    for (const std::string& host : config.allowed_hosts) {
+        add(host);
+    }
+    return allowed;
+}
+
+bool state_changing(const httplib::Request& request) {
+    return request.method == "POST" || request.method == "PUT" ||
+           request.method == "PATCH" || request.method == "DELETE";
 }
 
 // Routes that read JSON must say so. Parsing an arbitrary body as JSON turns a
@@ -170,6 +233,65 @@ json status_json(const StatusView& status) {
 }  // namespace
 
 void register_routes(httplib::Server& server, Application& app) {
+    const AppConfig& config = app.config();
+    const std::unordered_set<std::string> allowed_hosts = host_allowlist(config);
+    if ((config.host == "0.0.0.0" || config.host == "::") &&
+        config.allowed_hosts.empty()) {
+        std::cerr << "[hnswhy] warning: bound to a wildcard address; only loopback Host "
+                     "names are accepted. Set HNSWHY_ALLOWED_HOSTS or --allowed-host for "
+                     "LAN names.\n";
+    }
+
+    // A local server with no authentication must not answer requests that a
+    // malicious web page can aim at it. DNS rebinding sends the attacker's
+    // hostname in Host while the socket still lands here, and a cross-site
+    // form/fetch can send a state-changing request even though CORS prevents
+    // reading the response. Reject both before routing.
+    server.set_pre_routing_handler(
+        [allowed_hosts](const httplib::Request& request,
+                        httplib::Response& response) {
+            const std::string host = trimmed_lowercase(request.get_header_value("Host"));
+            if (host.empty()) {
+                send_error(response, 400, "MISSING_HOST",
+                           "the Host header is required");
+                return httplib::Server::HandlerResponse::Handled;
+            }
+            const std::string host_name = host_name_of(host);
+            if (host_name.empty() || allowed_hosts.count(host_name) == 0) {
+                send_error(response, 403, "FORBIDDEN_HOST",
+                           "the Host header is not allowed; use localhost or configure "
+                           "HNSWHY_ALLOWED_HOSTS");
+                return httplib::Server::HandlerResponse::Handled;
+            }
+
+            if (!state_changing(request)) {
+                return httplib::Server::HandlerResponse::Unhandled;
+            }
+
+            // Chromium sends Sec-Fetch-Site on every request it makes. A
+            // same-site value still covers another port on this machine, which
+            // is not a trusted origin for this single-origin app.
+            const std::string fetch_site =
+                trimmed_lowercase(request.get_header_value("Sec-Fetch-Site"));
+            if (!fetch_site.empty() && fetch_site != "same-origin" &&
+                fetch_site != "none") {
+                send_error(response, 403, "CROSS_SITE_REQUEST",
+                           "cross-site state-changing requests are not allowed");
+                return httplib::Server::HandlerResponse::Handled;
+            }
+
+            const std::string origin = request.get_header_value("Origin");
+            if (!origin.empty()) {
+                const std::string origin_host = origin_authority(origin);
+                if (origin_host.empty() || origin_host != host) {
+                    send_error(response, 403, "CROSS_SITE_REQUEST",
+                               "the Origin header does not match this server");
+                    return httplib::Server::HandlerResponse::Handled;
+                }
+            }
+            return httplib::Server::HandlerResponse::Unhandled;
+        });
+
     server.Get("/api/health", [&app](const httplib::Request&, httplib::Response& response) {
         guarded(response, [&] {
             const HealthView health = app.health();

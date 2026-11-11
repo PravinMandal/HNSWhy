@@ -1,0 +1,6 @@
+build 8381.2 ms live=100000 top=5
+clean p50 0.0055 ms | first-search-after-insert median 0.013 ms (2x)
+dirty samples: 0.011 0.012 0.013 0.017 0.019
+dup build 5782.7 ms
+dup fallbacks=1 count=5
+dup query 0.400 ms (brute force would be ~0.200 ms at 50k)

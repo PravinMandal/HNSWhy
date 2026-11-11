@@ -164,6 +164,16 @@
   min-width: 0;
 }
 
+.chart__scroll {
+  min-width: 0;
+  border-radius: var(--radius-sm);
+}
+
+.chart__scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .chart__svg {
   width: 100%;
   height: auto;
@@ -590,5 +600,25 @@
 
   .ef-picker {
     align-self: flex-start;
+  }
+
+  /* Scaling a 720-unit viewBox into a phone card made 9-unit labels about
+     4 px tall. Give the chart a readable minimum width and let the focusable
+     wrapper scroll instead. */
+  .chart__scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .chart__svg {
+    min-width: 640px;
+  }
+
+  .chart__tick {
+    font-size: 12px;
+  }
+
+  .chart__axis {
+    font-size: 11px;
   }
 }

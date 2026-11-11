@@ -77,33 +77,6 @@ struct Options {
     std::exit(2);
 }
 
-std::vector<std::size_t> parse_ef_list(const std::string& text) {
-    std::vector<std::size_t> values;
-    std::size_t start = 0;
-    while (start <= text.size()) {
-        const std::size_t comma = text.find(',', start);
-        const std::string token =
-            comma == std::string::npos ? text.substr(start) : text.substr(start, comma - start);
-        if (token.empty()) {
-            throw std::invalid_argument("empty efSearch value");
-        }
-        const std::size_t value = hnswhy::bench::parse_size(token, "--ef");
-        if (value == 0) {
-            // HNSW clamps ef up to k, so accepting 0 would label a run "ef=0"
-            // while actually measuring ef=k. That would make the report lie.
-            throw std::invalid_argument("efSearch must be positive");
-        }
-        values.push_back(value);
-        if (comma == std::string::npos) {
-            break;
-        }
-        start = comma + 1;
-    }
-    std::sort(values.begin(), values.end());
-    values.erase(std::unique(values.begin(), values.end()), values.end());
-    return values;
-}
-
 Options parse(int argc, char** argv) {
     Options options;
     for (int i = 1; i < argc; ++i) {
@@ -127,7 +100,7 @@ Options parse(int argc, char** argv) {
         } else if (arg == "--k") {
             options.k = hnswhy::bench::parse_size(value(), "--k");
         } else if (arg == "--ef") {
-            options.ef_grid = parse_ef_list(value());
+            options.ef_grid = hnswhy::bench::parse_ef_list(value());
         } else if (arg == "--passes") {
             options.passes = hnswhy::bench::parse_size(value(), "--passes");
         } else if (arg == "--warmup") {
@@ -178,6 +151,15 @@ Options parse(int argc, char** argv) {
         // The report always exposes recall_at_10; silently treating k < 10 as
         // recall@k would make the JSON field lie.
         throw std::invalid_argument("k must be at least 10 for the report schema");
+    }
+    for (const std::size_t ef : options.ef_grid) {
+        if (ef < options.k) {
+            // HNSW clamps ef up to k. Accepting a smaller label would measure
+            // ef=k and print ef<k, which reads as a property of the algorithm
+            // when it is only a mislabeled run.
+            throw std::invalid_argument(
+                "efSearch must be at least k; smaller values are measured as k");
+        }
     }
     return options;
 }
@@ -295,7 +277,11 @@ int main(int argc, char** argv) {
 
         const std::size_t recall10_k = std::min<std::size_t>(10, options.k);
 
-        for (const std::size_t ef : options.ef_grid) {
+        for (const std::size_t requested_ef : options.ef_grid) {
+            // HNSW clamps ef to the slot count. Label the row with the width
+            // that actually ran, so an ef larger than the dataset is not
+            // reported as if the engine had searched that far.
+            const std::size_t ef = std::min(requested_ef, base.size());
             for (std::size_t w = 0; w < std::min(options.warmup, queries.n); ++w) {
                 (void)hnsw.search(queries.row(w), options.k, ef);
             }

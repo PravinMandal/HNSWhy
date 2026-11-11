@@ -1,8 +1,10 @@
 #include "product/app.h"
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "framework/temp_path.h"
@@ -72,6 +74,20 @@ void exec_sql(const TempPath& db, const std::string& sql) {
     }
     sqlite3_close(handle);
     CHECK_EQ(status, SQLITE_OK);
+}
+
+long long scalar_int(const TempPath& db, const std::string& sql) {
+    sqlite3* handle = nullptr;
+    CHECK_EQ(sqlite3_open(db.path().string().c_str(), &handle), SQLITE_OK);
+    sqlite3_stmt* statement = nullptr;
+    CHECK_EQ(sqlite3_prepare_v2(handle, sql.c_str(), -1, &statement, nullptr), SQLITE_OK);
+    long long value = -1;
+    if (sqlite3_step(statement) == SQLITE_ROW) {
+        value = sqlite3_column_int64(statement, 0);
+    }
+    sqlite3_finalize(statement);
+    sqlite3_close(handle);
+    return value;
 }
 
 }  // namespace
@@ -378,6 +394,116 @@ HNSWHY_TEST(application_finishes_an_interrupted_sample_seed) {
     }
 }
 
+HNSWHY_TEST(application_does_not_seed_samples_into_an_existing_library) {
+    TempPath db(".db");
+    TempDir dir;
+    const std::filesystem::path samples = dir.path() / "samples";
+    std::filesystem::create_directories(samples);
+    {
+        // A sample file that a broken guard would actually insert, so the
+        // assertion below can tell "not seeded" from "nothing to seed".
+        std::ofstream file(samples / "engine.md");
+        file << "# Engine guide\n\n" << kDocumentText << '\n';
+    }
+
+    hnswhy::AppConfig config = test_config(db, dir);
+    std::size_t user_chunks = 0;
+    {
+        hnswhy::Application app(config);
+        user_chunks =
+            app.add_document("User notes", "user.md", kDocumentText).chunk_count;
+        CHECK_EQ(app.list_documents().size(), std::size_t{1});
+    }
+
+    // Losing the initialization marker is not the same as a fresh database:
+    // the library already holds user data, so the samples must stay out.
+    exec_sql(db, "DELETE FROM meta WHERE key = 'app_initialized'");
+
+    config.load_sample = true;
+    {
+        hnswhy::Application app(config);
+        const auto documents = app.list_documents();
+        CHECK_EQ(documents.size(), std::size_t{1});
+        CHECK_EQ(documents[0].title, std::string("User notes"));
+        CHECK(!app.status().sample_loaded);
+        CHECK_EQ(app.status().index_live, user_chunks);
+    }
+    CHECK_EQ(scalar_int(db, "SELECT COUNT(*) FROM meta WHERE key = 'sample_loaded'"), 0);
+}
+
+HNSWHY_TEST(application_retries_sample_seed_after_a_non_hash_start) {
+    TempPath db(".db");
+    TempDir dir;
+    const std::filesystem::path samples = dir.path() / "samples";
+    std::filesystem::create_directories(samples);
+    {
+        std::ofstream file(samples / "engine.md");
+        file << "# Engine guide\n\n" << kDocumentText << '\n';
+    }
+
+    hnswhy::AppConfig config = test_config(db, dir);
+    config.load_sample = true;
+    config.embedding.provider = "ollama";
+    config.embedding.model = "nomic-embed-text";
+    config.embedding.base_url = "http://127.0.0.1:9";
+    config.embedding.dim = 0;
+    {
+        // The offline sample corpus is hash-only. Starting with another
+        // provider must not permanently mark the database initialized, or the
+        // samples would never load after switching back to hash.
+        hnswhy::Application app(config);
+        CHECK_EQ(app.list_documents().size(), std::size_t{0});
+        CHECK(!app.status().sample_loaded);
+    }
+    CHECK_EQ(scalar_int(db, "SELECT COUNT(*) FROM meta WHERE key = 'app_initialized'"), 0);
+
+    config.embedding = hnswhy::EmbeddingConfig{};
+    config.embedding.provider = "hash";
+    config.embedding.dim = 256;
+    {
+        hnswhy::Application app(config);
+        CHECK_EQ(app.list_documents().size(), std::size_t{1});
+        CHECK(app.status().sample_loaded);
+    }
+    CHECK_EQ(scalar_int(db, "SELECT COUNT(*) FROM meta WHERE key = 'app_initialized'"), 1);
+}
+
+HNSWHY_TEST(application_rejects_text_over_four_megabytes) {
+    TempPath db(".db");
+    TempDir dir;
+    hnswhy::Application app(test_config(db, dir));
+    try {
+        (void)app.add_document("Big", "big.txt", std::string(4U * 1024U * 1024U + 1, 'a'));
+        CHECK(false);
+    } catch (const hnswhy::ProductError& error) {
+        CHECK_EQ(error.code(), std::string("DOCUMENT_TOO_LARGE"));
+        CHECK_EQ(error.status(), 413);
+    }
+    CHECK_EQ(app.list_documents().size(), std::size_t{0});
+}
+
+HNSWHY_TEST(application_caps_map_points_by_embedding_dimension) {
+    TempPath db(".db");
+    TempDir dir;
+    hnswhy::AppConfig config = test_config(db, dir);
+    config.embedding.dim = 65536;  // the documented maximum
+    config.chunk_target_words = 10;
+    config.chunk_overlap_words = 0;
+    hnswhy::Application app(config);
+    const hnswhy::DocumentSummary added =
+        app.add_document("Wide vectors", "wide.md", kDocumentText);
+    CHECK(added.chunk_count > 6);
+
+    // 400,000 floats divided by 65,536 dimensions is six points. The map is a
+    // sample, so the response shrinks instead of rejecting the request.
+    const hnswhy::MapView map = app.map(1200);
+    CHECK_EQ(map.total_chunks, added.chunk_count);
+    CHECK_EQ(map.points.size(), std::size_t{6});
+    for (const hnswhy::MapPoint& point : map.points) {
+        CHECK_EQ(point.vector.size(), std::size_t{65536});
+    }
+}
+
 HNSWHY_TEST(application_serves_a_benchmark_only_when_the_report_exists) {
     TempPath db(".db");
     TempDir dir;
@@ -414,4 +540,42 @@ HNSWHY_TEST(application_serves_a_benchmark_only_when_the_report_exists) {
     hnswhy::Application missing(config);
     CHECK(!missing.benchmark_json().contents.has_value());
     CHECK(missing.benchmark_json().error.empty());
+}
+
+HNSWHY_TEST(application_asks_while_an_upload_is_in_flight) {
+    TempPath db(".db");
+    TempDir dir;
+    hnswhy::Application app(test_config(db, dir));
+    app.add_document("Initial", "initial.md", kDocumentText);
+
+    // ask() releases the application mutex while it embeds the question and
+    // generates the answer. Uploads must still be able to take that mutex, and
+    // a search that starts before the upload must not see a half-inserted
+    // document or a torn index.
+    std::atomic<bool> started{false};
+    std::atomic<int> failures{0};
+    std::thread asker([&] {
+        started.store(true, std::memory_order_release);
+        for (int i = 0; i < 12; ++i) {
+            try {
+                const hnswhy::RagAnswer answer =
+                    app.ask("What does efSearch control?", 2);
+                if (answer.answer.empty() || answer.sources.empty()) {
+                    failures.fetch_add(1, std::memory_order_relaxed);
+                }
+            } catch (const std::exception&) {
+                failures.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    });
+    while (!started.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    for (int i = 0; i < 4; ++i) {
+        app.add_document("Concurrent " + std::to_string(i), "concurrent.md", kDocumentText);
+    }
+    asker.join();
+    CHECK_EQ(failures.load(std::memory_order_relaxed), 0);
+    CHECK_EQ(app.list_documents().size(), std::size_t{5});
+    CHECK_EQ(app.status().store.chunks, app.status().index_live);
 }

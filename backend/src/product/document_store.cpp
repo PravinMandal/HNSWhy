@@ -213,6 +213,15 @@ DocumentStore::DocumentStore(const std::filesystem::path& path) : path_(path) {
             }
         }
 
+        // Create the database with owner-only permissions before SQLite opens
+        // it. Otherwise SQLite creates it with the process umask (commonly
+        // 022) and the chmod below leaves a readable window, including after a
+        // crash before that chmod runs.
+        const int db_fd = ::open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+        if (db_fd >= 0) {
+            ::close(db_fd);
+        }
+
         // One writer per database. O_CLOEXEC matters: pdftotext is spawned
         // while the server runs and must not inherit (and outlive) the lock.
         const std::filesystem::path lock_path(path.string() + ".lock");
@@ -569,31 +578,38 @@ std::vector<ChunkDetail> DocumentStore::get_chunks(std::span<const Id> chunk_ids
         return {};
     }
 
-    std::string sql =
-        "SELECT c.id, c.document_id, d.title, c.ordinal, c.text "
-        "FROM chunks c JOIN documents d ON d.id = c.document_id WHERE c.id IN (";
-    for (std::size_t i = 0; i < chunk_ids.size(); ++i) {
-        if (i != 0) {
-            sql += ',';
-        }
-        sql += '?';
-    }
-    sql += ')';
-
-    Statement statement(db_, sql);
-    for (std::size_t i = 0; i < chunk_ids.size(); ++i) {
-        statement.bind_int64(static_cast<int>(i + 1), chunk_ids[i]);
-    }
-
+    // SQLite has a finite SQLITE_MAX_VARIABLE_NUMBER. Retrieval normally asks
+    // for at most 20 ids, but this method is public and must not build a query
+    // whose placeholder count depends on the caller. Batch in a size that is
+    // below every supported SQLite limit.
+    constexpr std::size_t kBatchSize = 500;
     std::vector<ChunkDetail> found;
-    while (statement.step()) {
-        ChunkDetail chunk;
-        chunk.chunk_id = statement.column_int64(0);
-        chunk.document_id = statement.column_int64(1);
-        chunk.title = statement.column_text(2);
-        chunk.ordinal = statement.column_int(3);
-        chunk.text = statement.column_text(4);
-        found.push_back(std::move(chunk));
+    for (std::size_t begin = 0; begin < chunk_ids.size(); begin += kBatchSize) {
+        const std::size_t end = std::min(begin + kBatchSize, chunk_ids.size());
+        std::string sql =
+            "SELECT c.id, c.document_id, d.title, c.ordinal, c.text "
+            "FROM chunks c JOIN documents d ON d.id = c.document_id WHERE c.id IN (";
+        for (std::size_t i = begin; i < end; ++i) {
+            if (i != begin) {
+                sql += ',';
+            }
+            sql += '?';
+        }
+        sql += ')';
+
+        Statement statement(db_, sql);
+        for (std::size_t i = begin; i < end; ++i) {
+            statement.bind_int64(static_cast<int>(i - begin + 1), chunk_ids[i]);
+        }
+        while (statement.step()) {
+            ChunkDetail chunk;
+            chunk.chunk_id = statement.column_int64(0);
+            chunk.document_id = statement.column_int64(1);
+            chunk.title = statement.column_text(2);
+            chunk.ordinal = statement.column_int(3);
+            chunk.text = statement.column_text(4);
+            found.push_back(std::move(chunk));
+        }
     }
 
     // The caller (search results) relies on its own ordering.

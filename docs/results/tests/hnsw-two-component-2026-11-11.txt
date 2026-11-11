@@ -1,0 +1,39 @@
+Two-component layer-0 probe — 2026-11-11
+=========================================
+
+Purpose: check whether seeding the layer-0 beam from entry_ as well as the
+upper-layer descent node changes any search result on graphs the probes can
+build. It does not reproduce a failure on the pre-change engine; the fix is a
+targeted guard, not a measured regression.
+
+Build (from the repository root):
+
+  g++ -std=c++20 -O2 -I backend/src \
+      docs/results/tests/harnesses/two_component_one_hot.cpp \
+      backend/src/engine/hnsw.cpp backend/src/engine/brute_force.cpp \
+      backend/src/engine/metrics.cpp backend/src/engine/vector_store.cpp \
+      -o /tmp/probe_one_hot_current
+
+  g++ -std=c++20 -O2 -I backend/src \
+      docs/results/tests/harnesses/two_component_permuted.cpp \
+      backend/src/engine/hnsw.cpp backend/src/engine/brute_force.cpp \
+      backend/src/engine/metrics.cpp backend/src/engine/vector_store.cpp \
+      -o /tmp/probe_permuted_current
+
+For the pre-change engine, replace backend/src/engine/hnsw.cpp with
+`git show HEAD:backend/src/engine/hnsw.cpp` written to a temporary file.
+
+The probes print "no failures" and exit 1 when every disconnected graph was
+searched exactly; they print the first mismatch and exit 0 when one is found.
+
+one_hot, pre-change engine (HEAD):
+  no failures
+
+one_hot, current engine:
+  no failures
+
+permuted, pre-change engine (HEAD):
+  no failures
+
+permuted, current engine:
+  no failures

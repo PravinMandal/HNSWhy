@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -339,6 +340,29 @@ HNSWHY_TEST(openai_compatible_client_rejects_bad_embedding_indices) {
     config.api_key = "test-key";
     auto provider = hnswhy::create_embedding_provider(config);
     CHECK_THROWS_AS(provider->embed({"first", "second"}), hnswhy::ProductError);
+}
+
+HNSWHY_TEST(openai_compatible_client_rejects_an_out_of_int_range_index) {
+    FakeServer fake;
+    fake.server().Post("/v1/embeddings", [](const httplib::Request&,
+                                            httplib::Response& response) {
+        const json data = json::array({
+            {{"index", std::numeric_limits<long long>::max()},
+             {"embedding", unit_vector(3, 0)}},
+        });
+        response.set_content(json{{"data", data}}.dump(), "application/json");
+    });
+    fake.start();
+
+    hnswhy::EmbeddingConfig config;
+    config.provider = "openai";
+    config.model = "text-embedding-3-small";
+    config.base_url = fake.base_url() + "/v1";
+    config.api_key = "test-key";
+    auto provider = hnswhy::create_embedding_provider(config);
+    // A huge integer must be a provider error (502), not a narrowing crash or
+    // nlohmann's own out_of_range exception.
+    CHECK_THROWS_AS(provider->embed({"first"}), hnswhy::ProductError);
 }
 
 HNSWHY_TEST(openai_compatible_client_embeds_and_chats) {

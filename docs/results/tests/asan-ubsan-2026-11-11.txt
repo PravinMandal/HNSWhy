@@ -1,0 +1,388 @@
+[ RUN  ] check_near_accepts_values_inside_the_tolerance
+[  OK  ] check_near_accepts_values_inside_the_tolerance
+[ RUN  ] check_near_rejects_nan
+[  OK  ] check_near_rejects_nan
+[ RUN  ] check_near_rejects_infinity
+[  OK  ] check_near_rejects_infinity
+[ RUN  ] distance_identical_is_zero
+[  OK  ] distance_identical_is_zero
+[ RUN  ] distance_known_value
+[  OK  ] distance_known_value
+[ RUN  ] distance_is_symmetric
+[  OK  ] distance_is_symmetric
+[ RUN  ] distance_dimension_mismatch_is_infinity
+[  OK  ] distance_dimension_mismatch_is_infinity
+[ RUN  ] distance_nan_is_infinity
+[  OK  ] distance_nan_is_infinity
+[ RUN  ] distance_infinity_is_infinity
+[  OK  ] distance_infinity_is_infinity
+[ RUN  ] vector_store_add_and_get
+[  OK  ] vector_store_add_and_get
+[ RUN  ] vector_store_reserved_append
+[  OK  ] vector_store_reserved_append
+[ RUN  ] vector_store_rejects_dimension_mismatch
+[  OK  ] vector_store_rejects_dimension_mismatch
+[ RUN  ] vector_store_rejects_out_of_range_slot
+[  OK  ] vector_store_rejects_out_of_range_slot
+[ RUN  ] vector_store_rejects_empty_vector
+[  OK  ] vector_store_rejects_empty_vector
+[ RUN  ] vector_store_move_resets_the_source
+[  OK  ] vector_store_move_resets_the_source
+[ RUN  ] vector_store_add_accepts_a_view_of_its_own_buffer
+[  OK  ] vector_store_add_accepts_a_view_of_its_own_buffer
+[ RUN  ] bruteforce_returns_nearest_first
+[  OK  ] bruteforce_returns_nearest_first
+[ RUN  ] bruteforce_breaks_ties_by_slot
+[  OK  ] bruteforce_breaks_ties_by_slot
+[ RUN  ] bruteforce_caps_k_at_store_size
+[  OK  ] bruteforce_caps_k_at_store_size
+[ RUN  ] bruteforce_k_zero_is_empty
+[  OK  ] bruteforce_k_zero_is_empty
+[ RUN  ] bruteforce_empty_store_returns_empty_for_any_query
+[  OK  ] bruteforce_empty_store_returns_empty_for_any_query
+[ RUN  ] bruteforce_rejects_query_dimension_mismatch
+[  OK  ] bruteforce_rejects_query_dimension_mismatch
+[ RUN  ] bench_parse_size_accepts_decimal_digits
+[  OK  ] bench_parse_size_accepts_decimal_digits
+[ RUN  ] bench_parse_size_rejects_negative_and_signed_values
+[  OK  ] bench_parse_size_rejects_negative_and_signed_values
+[ RUN  ] bench_parse_size_rejects_empty_and_junk
+[  OK  ] bench_parse_size_rejects_empty_and_junk
+[ RUN  ] bench_parse_size_rejects_overflow
+[  OK  ] bench_parse_size_rejects_overflow
+[ RUN  ] bench_parse_ef_list_sorts_dedupes_and_rejects_zero
+[  OK  ] bench_parse_ef_list_sorts_dedupes_and_rejects_zero
+[ RUN  ] fvecs_roundtrip_and_store_load
+[  OK  ] fvecs_roundtrip_and_store_load
+[ RUN  ] ivecs_roundtrip
+[  OK  ] ivecs_roundtrip
+[ RUN  ] fvecs_rejects_truncated_file
+[  OK  ] fvecs_rejects_truncated_file
+[ RUN  ] fvecs_rejects_implausible_dimension
+[  OK  ] fvecs_rejects_implausible_dimension
+[ RUN  ] fvecs_rejects_missing_file
+[  OK  ] fvecs_rejects_missing_file
+[ RUN  ] hnsw_empty_index_returns_empty
+[  OK  ] hnsw_empty_index_returns_empty
+[ RUN  ] hnsw_finds_exact_neighbours_on_small_random_set
+[  OK  ] hnsw_finds_exact_neighbours_on_small_random_set
+[ RUN  ] hnsw_self_queries_return_the_point_first
+[  OK  ] hnsw_self_queries_return_the_point_first
+[ RUN  ] hnsw_handles_duplicate_vectors
+[  OK  ] hnsw_handles_duplicate_vectors
+[ RUN  ] hnsw_tie_heavy_search_returns_all_live_vectors
+[  OK  ] hnsw_tie_heavy_search_returns_all_live_vectors
+[ RUN  ] hnsw_incremental_duplicates_stay_searchable
+[  OK  ] hnsw_incremental_duplicates_stay_searchable
+[ RUN  ] hnsw_removing_unreachable_nodes_restores_graph_search
+[  OK  ] hnsw_removing_unreachable_nodes_restores_graph_search
+[ RUN  ] hnsw_incremental_insert_after_connected_removals_rechecks_reachability
+[  OK  ] hnsw_incremental_insert_after_connected_removals_rechecks_reachability
+[ RUN  ] hnsw_rejects_an_invalid_insert_without_poisoning_the_graph
+[  OK  ] hnsw_rejects_an_invalid_insert_without_poisoning_the_graph
+[ RUN  ] hnsw_is_deterministic_for_the_same_seed
+[  OK  ] hnsw_is_deterministic_for_the_same_seed
+[ RUN  ] hnsw_ef_below_k_still_returns_k
+[  OK  ] hnsw_ef_below_k_still_returns_k
+[ RUN  ] hnsw_zero_k_returns_empty_and_ef_zero_still_returns_k
+[  OK  ] hnsw_zero_k_returns_empty_and_ef_zero_still_returns_k
+[ RUN  ] hnsw_survives_permuted_insertion_order
+[  OK  ] hnsw_survives_permuted_insertion_order
+[ RUN  ] hnsw_rejects_invalid_parameters
+[  OK  ] hnsw_rejects_invalid_parameters
+[ RUN  ] hnsw_rejects_dimension_mismatch_query
+[  OK  ] hnsw_rejects_dimension_mismatch_query
+[ RUN  ] hnsw_reports_search_stats
+[  OK  ] hnsw_reports_search_stats
+[ RUN  ] hnsw_rejects_out_of_store_insert
+[  OK  ] hnsw_rejects_out_of_store_insert
+[ RUN  ] hnsw_back_edge_prune_keeps_the_new_node
+[  OK  ] hnsw_back_edge_prune_keeps_the_new_node
+[ RUN  ] hnsw_validate_holds_after_every_incremental_change
+[  OK  ] hnsw_validate_holds_after_every_incremental_change
+[ RUN  ] hnsw_empty_default_store_returns_empty
+[  OK  ] hnsw_empty_default_store_returns_empty
+[ RUN  ] hnsw_one_hot_self_queries_stay_exact_and_prefix_consistent
+[  OK  ] hnsw_one_hot_self_queries_stay_exact_and_prefix_consistent
+[ RUN  ] heuristic_keeps_diverse_neighbour_instead_of_near_duplicate
+[  OK  ] heuristic_keeps_diverse_neighbour_instead_of_near_duplicate
+[ RUN  ] nearest_only_keeps_the_two_closest
+[  OK  ] nearest_only_keeps_the_two_closest
+[ RUN  ] heuristic_keeps_equal_distance_duplicates
+[  OK  ] heuristic_keeps_equal_distance_duplicates
+[ RUN  ] heuristic_skips_ref_and_duplicate_candidate_ids
+[  OK  ] heuristic_skips_ref_and_duplicate_candidate_ids
+[ RUN  ] two_cluster_heuristic_keeps_both_clusters_reachable
+[  OK  ] two_cluster_heuristic_keeps_both_clusters_reachable
+[ RUN  ] hnsw_deleted_nodes_are_never_returned
+[  OK  ] hnsw_deleted_nodes_are_never_returned
+[ RUN  ] hnsw_search_works_after_the_entry_point_is_deleted
+[  OK  ] hnsw_search_works_after_the_entry_point_is_deleted
+[ RUN  ] hnsw_can_insert_after_every_node_is_deleted
+[  OK  ] hnsw_can_insert_after_every_node_is_deleted
+[ RUN  ] hnsw_remove_is_idempotent
+[  OK  ] hnsw_remove_is_idempotent
+[ RUN  ] hnsw_remove_rejects_out_of_range
+[  OK  ] hnsw_remove_rejects_out_of_range
+[ RUN  ] hnsw_all_deleted_index_returns_less_than_k
+[  OK  ] hnsw_all_deleted_index_returns_less_than_k
+[ RUN  ] metrics_recall_is_one_for_exact_results
+[  OK  ] metrics_recall_is_one_for_exact_results
+[ RUN  ] metrics_recall_counts_partial_hits
+[  OK  ] metrics_recall_counts_partial_hits
+[ RUN  ] metrics_recall_counts_ties_at_the_cutoff
+[  OK  ] metrics_recall_counts_ties_at_the_cutoff
+[ RUN  ] metrics_recall_handles_short_results_and_zero_k
+[  OK  ] metrics_recall_handles_short_results_and_zero_k
+[ RUN  ] metrics_percentile_uses_nearest_rank
+[  OK  ] metrics_percentile_uses_nearest_rank
+[ RUN  ] metrics_latency_summary
+[  OK  ] metrics_latency_summary
+[ RUN  ] metrics_qps
+[  OK  ] metrics_qps
+[ RUN  ] chunker_short_text_is_one_chunk
+[  OK  ] chunker_short_text_is_one_chunk
+[ RUN  ] chunker_windows_overlap_and_cover_text
+[  OK  ] chunker_windows_overlap_and_cover_text
+[ RUN  ] chunker_normalizes_line_endings_and_whitespace
+[  OK  ] chunker_normalizes_line_endings_and_whitespace
+[ RUN  ] chunker_empty_and_rejects_bad_options
+[  OK  ] chunker_empty_and_rejects_bad_options
+[ RUN  ] chunker_extracts_plain_text_and_strips_bom
+[  OK  ] chunker_extracts_plain_text_and_strips_bom
+[ RUN  ] chunker_rejects_binary_and_unknown_formats
+[  OK  ] chunker_rejects_binary_and_unknown_formats
+[ RUN  ] chunker_extracts_text_from_a_pdf
+[  OK  ] chunker_extracts_text_from_a_pdf
+[ RUN  ] chunker_rejects_corrupt_and_scanned_pdfs
+[  OK  ] chunker_rejects_corrupt_and_scanned_pdfs
+[ RUN  ] chunker_reports_missing_pdftotext
+[  OK  ] chunker_reports_missing_pdftotext
+[ RUN  ] chunker_rejects_documents_over_max_chunks
+[  OK  ] chunker_rejects_documents_over_max_chunks
+[ RUN  ] chunker_rejects_uploads_over_twenty_megabytes
+[  OK  ] chunker_rejects_uploads_over_twenty_megabytes
+[ RUN  ] text_validates_utf8_and_truncates_at_codepoint_boundaries
+[  OK  ] text_validates_utf8_and_truncates_at_codepoint_boundaries
+[ RUN  ] chunker_splits_whitespace_free_text_instead_of_one_giant_chunk
+[  OK  ] chunker_splits_whitespace_free_text_instead_of_one_giant_chunk
+[ RUN  ] config_derives_m0_from_m_when_m0_is_not_explicit
+[  OK  ] config_derives_m0_from_m_when_m0_is_not_explicit
+[ RUN  ] config_keeps_explicit_m0
+[  OK  ] config_keeps_explicit_m0
+[ RUN  ] config_does_not_mistake_an_option_value_for_a_flag
+[  OK  ] config_does_not_mistake_an_option_value_for_a_flag
+[ RUN  ] config_rejects_m0_smaller_than_m
+[  OK  ] config_rejects_m0_smaller_than_m
+[ RUN  ] config_reads_environment_overrides
+[  OK  ] config_reads_environment_overrides
+[ RUN  ] config_uses_openai_key_only_for_the_default_endpoint
+[  OK  ] config_uses_openai_key_only_for_the_default_endpoint
+[ RUN  ] document_store_insert_list_and_get
+[  OK  ] document_store_insert_list_and_get
+[ RUN  ] document_store_loads_embeddings_in_stable_order
+[  OK  ] document_store_loads_embeddings_in_stable_order
+[ RUN  ] document_store_delete_cascades_and_is_idempotent
+[  OK  ] document_store_delete_cascades_and_is_idempotent
+[ RUN  ] document_store_refuses_a_second_writer
+[  OK  ] document_store_refuses_a_second_writer
+[ RUN  ] document_store_reopens_without_losing_data
+[  OK  ] document_store_reopens_without_losing_data
+[ RUN  ] document_store_embedding_metadata_round_trip
+[  OK  ] document_store_embedding_metadata_round_trip
+[ RUN  ] document_store_replaces_embeddings_atomically
+[  OK  ] document_store_replaces_embeddings_atomically
+[ RUN  ] document_store_rolls_back_a_failed_embedding_replacement
+[  OK  ] document_store_rolls_back_a_failed_embedding_replacement
+[ RUN  ] document_store_reports_incomplete_metadata_without_throwing
+[  OK  ] document_store_reports_incomplete_metadata_without_throwing
+[ RUN  ] document_store_replaces_a_missing_embedding_row
+[  OK  ] document_store_replaces_a_missing_embedding_row
+[ RUN  ] document_store_rejects_a_corrupt_embedding_blob
+[  OK  ] document_store_rejects_a_corrupt_embedding_blob
+[ RUN  ] document_store_samples_and_reports_stats
+[  OK  ] document_store_samples_and_reports_stats
+[ RUN  ] document_store_fetches_more_chunks_than_one_sql_batch
+[  OK  ] document_store_fetches_more_chunks_than_one_sql_batch
+[ RUN  ] document_store_rejects_inconsistent_embeddings
+[  OK  ] document_store_rejects_inconsistent_embeddings
+[ RUN  ] document_store_rejects_a_newer_schema
+[  OK  ] document_store_rejects_a_newer_schema
+[ RUN  ] document_store_restricts_files_to_the_owner
+[  OK  ] document_store_restricts_files_to_the_owner
+[ RUN  ] text_tokenize_and_sentence_split
+[  OK  ] text_tokenize_and_sentence_split
+[ RUN  ] hash_embedding_is_deterministic_and_normalized
+[  OK  ] hash_embedding_is_deterministic_and_normalized
+[ RUN  ] hash_embedding_ranks_related_text_closer
+[  OK  ] hash_embedding_ranks_related_text_closer
+[ RUN  ] extractive_answer_cites_and_refuses
+[  OK  ] extractive_answer_cites_and_refuses
+[ RUN  ] extractive_answer_preserves_decimal_numbers
+[  OK  ] extractive_answer_preserves_decimal_numbers
+[ RUN  ] provider_factory_defaults_and_config_errors
+[  OK  ] provider_factory_defaults_and_config_errors
+[ RUN  ] openai_compatible_client_sends_authorization_only_with_a_key
+[  OK  ] openai_compatible_client_sends_authorization_only_with_a_key
+[ RUN  ] openai_compatible_client_does_not_follow_redirects
+[  OK  ] openai_compatible_client_does_not_follow_redirects
+[ RUN  ] ollama_client_speaks_embed_and_generate
+[  OK  ] ollama_client_speaks_embed_and_generate
+[ RUN  ] ollama_client_falls_back_to_single_embeddings
+[  OK  ] ollama_client_falls_back_to_single_embeddings
+[ RUN  ] openai_compatible_client_rejects_bad_embedding_indices
+[  OK  ] openai_compatible_client_rejects_bad_embedding_indices
+[ RUN  ] openai_compatible_client_rejects_an_out_of_int_range_index
+[  OK  ] openai_compatible_client_rejects_an_out_of_int_range_index
+[ RUN  ] openai_compatible_client_embeds_and_chats
+[  OK  ] openai_compatible_client_embeds_and_chats
+[ RUN  ] http_parse_endpoint_normalizes_and_validates
+[  OK  ] http_parse_endpoint_normalizes_and_validates
+[ RUN  ] http_rejects_non_positive_timeouts
+[  OK  ] http_rejects_non_positive_timeouts
+[ RUN  ] vector_index_rebuild_add_search_and_tombstone
+[  OK  ] vector_index_rebuild_add_search_and_tombstone
+[ RUN  ] vector_index_rejects_bad_inputs
+[  OK  ] vector_index_rejects_bad_inputs
+[ RUN  ] vector_index_rejects_a_duplicate_mid_batch_without_mutating
+[  OK  ] vector_index_rejects_a_duplicate_mid_batch_without_mutating
+[ RUN  ] vector_index_maps_after_deletion_and_rebuild
+[  OK  ] vector_index_maps_after_deletion_and_rebuild
+[ RUN  ] rag_answers_with_sources_and_grounded_prompt
+[  OK  ] rag_answers_with_sources_and_grounded_prompt
+[ RUN  ] rag_refuses_without_documents_and_skips_chat
+[  OK  ] rag_refuses_without_documents_and_skips_chat
+[ RUN  ] rag_offline_pipeline_cites_retrieved_sentence
+[  OK  ] rag_offline_pipeline_cites_retrieved_sentence
+[ RUN  ] rag_offline_pipeline_preserves_decimal_values
+[  OK  ] rag_offline_pipeline_preserves_decimal_values
+[ RUN  ] rag_validates_question_and_k
+[  OK  ] rag_validates_question_and_k
+[ RUN  ] rag_rejects_non_finite_query_embeddings
+[  OK  ] rag_rejects_non_finite_query_embeddings
+[ RUN  ] rag_detects_stale_index_entries
+[  OK  ] rag_detects_stale_index_entries
+[ RUN  ] rag_ranks_the_relevant_document_first
+[  OK  ] rag_ranks_the_relevant_document_first
+[ RUN  ] rag_returns_uncited_chat_text_unchanged
+[  OK  ] rag_returns_uncited_chat_text_unchanged
+[ RUN  ] rag_rejects_an_empty_chat_answer
+[  OK  ] rag_rejects_an_empty_chat_answer
+[ RUN  ] rag_detects_query_embedding_dimension_mismatch
+[  OK  ] rag_detects_query_embedding_dimension_mismatch
+[ RUN  ] application_uploads_asks_maps_and_deletes
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] compacting 4 tombstones by rebuilding the index from SQLite
+[  OK  ] application_uploads_asks_maps_and_deletes
+[ RUN  ] application_uploads_incrementally_without_rebuilding
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[  OK  ] application_uploads_incrementally_without_rebuilding
+[ RUN  ] application_validates_uploads_and_lookups
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[  OK  ] application_validates_uploads_and_lookups
+[ RUN  ] application_answers_from_an_empty_library_without_a_provider_call
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[  OK  ] application_answers_from_an_empty_library_without_a_provider_call
+[ RUN  ] application_survives_restart_and_rebuilds_index
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] ready: 1 documents, 4 live vectors, 256 dimensions
+[hnswhy] compacting 4 tombstones by rebuilding the index from SQLite
+[  OK  ] application_survives_restart_and_rebuilds_index
+[ RUN  ] application_reembeds_when_the_embedding_space_changes
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] re-embedded 4 chunks with hash/local-hash-v1
+[hnswhy] ready: 1 documents, 4 live vectors, 128 dimensions
+[  OK  ] application_reembeds_when_the_embedding_space_changes
+[ RUN  ] application_reembed_repairs_missing_rows_and_metadata
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] re-embedded 4 chunks with hash/local-hash-v1
+[hnswhy] ready: 1 documents, 4 live vectors, 256 dimensions
+[  OK  ] application_reembed_repairs_missing_rows_and_metadata
+[ RUN  ] application_seeds_samples_once_on_a_fresh_database
+[hnswhy] seeded sample knowledge base: 2 new, 0 already present
+[hnswhy] ready: 2 documents, 5 live vectors, 256 dimensions
+[hnswhy] ready: 2 documents, 5 live vectors, 256 dimensions
+[  OK  ] application_seeds_samples_once_on_a_fresh_database
+[ RUN  ] application_finishes_an_interrupted_sample_seed
+[hnswhy] seeded sample knowledge base: 2 new, 0 already present
+[hnswhy] ready: 2 documents, 5 live vectors, 256 dimensions
+[hnswhy] seeded sample knowledge base: 1 new, 1 already present
+[hnswhy] ready: 2 documents, 5 live vectors, 256 dimensions
+[hnswhy] seeded sample knowledge base: 0 new, 2 already present
+[hnswhy] ready: 2 documents, 5 live vectors, 256 dimensions
+[  OK  ] application_finishes_an_interrupted_sample_seed
+[ RUN  ] application_does_not_seed_samples_into_an_existing_library
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] ready: 1 documents, 4 live vectors, 256 dimensions
+[  OK  ] application_does_not_seed_samples_into_an_existing_library
+[ RUN  ] application_retries_sample_seed_after_a_non_hash_start
+[hnswhy] sample knowledge base skipped because it requires the offline hash embedding provider; it will seed if the provider changes
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] seeded sample knowledge base: 1 new, 0 already present
+[hnswhy] ready: 1 documents, 4 live vectors, 256 dimensions
+[  OK  ] application_retries_sample_seed_after_a_non_hash_start
+[ RUN  ] application_rejects_text_over_four_megabytes
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[  OK  ] application_rejects_text_over_four_megabytes
+[ RUN  ] application_caps_map_points_by_embedding_dimension
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[  OK  ] application_caps_map_points_by_embedding_dimension
+[ RUN  ] application_serves_a_benchmark_only_when_the_report_exists
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[  OK  ] application_serves_a_benchmark_only_when_the_report_exists
+[ RUN  ] application_asks_while_an_upload_is_in_flight
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[  OK  ] application_asks_while_an_upload_is_in_flight
+[ RUN  ] api_health_upload_ask_map_and_delete_flow
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595915_15/web"; API-only mode
+[hnswhy] compacting 1 tombstones by rebuilding the index from SQLite
+[  OK  ] api_health_upload_ask_map_and_delete_flow
+[ RUN  ] api_validates_bad_requests_and_unknown_documents
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595915_16/web"; API-only mode
+[  OK  ] api_validates_bad_requests_and_unknown_documents
+[ RUN  ] api_rejects_non_json_content_types
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595915_17/web"; API-only mode
+[  OK  ] api_rejects_non_json_content_types
+[ RUN  ] api_accepts_multipart_uploads
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595915_18/web"; API-only mode
+[  OK  ] api_accepts_multipart_uploads
+[ RUN  ] api_accepts_multipart_pdf_uploads
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595915_19/web"; API-only mode
+[  OK  ] api_accepts_multipart_pdf_uploads
+[ RUN  ] api_serves_the_benchmark_report_when_present
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595915_20/web"; API-only mode
+[  OK  ] api_serves_the_benchmark_report_when_present
+[ RUN  ] api_rejects_foreign_hosts_and_cross_site_writes
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595915_21/web"; API-only mode
+[  OK  ] api_rejects_foreign_hosts_and_cross_site_writes
+[ RUN  ] api_accepts_configured_extra_host_names
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595915_22/web"; API-only mode
+[  OK  ] api_accepts_configured_extra_host_names
+[ RUN  ] api_static_mount_does_not_serve_files_outside_the_root
+[hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
+[  OK  ] api_static_mount_does_not_serve_files_outside_the_root
+[ RUN  ] sift10k_fixture_bruteforce_matches_groundtruth
+  sift10k fixture: id overlap 1, max |distance error| 0
+[  OK  ] sift10k_fixture_bruteforce_matches_groundtruth
+[ RUN  ] sift10k_fixture_hnsw_meets_recall_gate
+  sift10k fixture HNSW: R@1 0.997, R@10 0.9963
+[  OK  ] sift10k_fixture_hnsw_meets_recall_gate
+[ RUN  ] siftsmall_bruteforce_matches_shipped_groundtruth
+  siftsmall: tie-aware recall 1, id overlap 1, max |kth error| 0
+[  OK  ] siftsmall_bruteforce_matches_shipped_groundtruth
+[ RUN  ] siftsmall_hnsw_recall_and_invariants
+  siftsmall hnsw: build 58001.9 ms, R@1 0.99, R@10 0.997, p50 2.03478 ms, p95 2.61801 ms
+[  OK  ] siftsmall_hnsw_recall_and_invariants
+[ RUN  ] bench_report_writes_stable_json_schema
+[  OK  ] bench_report_writes_stable_json_schema
+
+165/165 tests passed

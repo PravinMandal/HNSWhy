@@ -4,10 +4,12 @@
 #include <array>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <semaphore>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -178,12 +180,31 @@ struct PipeCloser {
 };
 
 std::string extract_pdf(std::string_view bytes) {
+    // Each upload is handled by its own HTTP worker, so without a cap a burst
+    // of PDF uploads could start one pdftotext process per worker. Two at a
+    // time keeps CPU and memory bounded; a request that cannot get a slot
+    // fails fast with a retryable error instead of queueing indefinitely.
+    constexpr std::ptrdiff_t kMaxConcurrentPdf = 2;
+    static std::counting_semaphore<kMaxConcurrentPdf> pdf_slots{kMaxConcurrentPdf};
+    if (!pdf_slots.try_acquire_for(std::chrono::seconds(5))) {
+        throw ProductError("SERVER_BUSY",
+                           "PDF extraction is busy; retry in a moment", 503);
+    }
+    struct SlotGuard {
+        std::counting_semaphore<kMaxConcurrentPdf>& slots;
+        ~SlotGuard() { slots.release(); }
+    } slot_guard{pdf_slots};
+
     PdfTempFile file;
     file.write(bytes);
 
+    // ulimit is a shell builtin: cap the child's address space and CPU time in
+    // addition to the wall-clock timeout. A crafted PDF cannot use the server's
+    // full memory or spin indefinitely inside the 30 s window.
     const std::string command =
-        "timeout 30s pdftotext -layout -enc UTF-8 -- " + shell_quote(file.path().string()) +
-        " - 2>/dev/null";
+        "ulimit -v 1048576 2>/dev/null; ulimit -t 30 2>/dev/null; "
+        "timeout 30s pdftotext -layout -enc UTF-8 -- " +
+        shell_quote(file.path().string()) + " - 2>/dev/null";
     FILE* raw_pipe = ::popen(command.c_str(), "r");
     if (raw_pipe == nullptr) {
         throw ProductError("EXTRACTION_FAILED",

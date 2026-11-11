@@ -91,6 +91,12 @@
   background: var(--accent-soft);
 }
 
+/* The quiet button sits on the danger-soft banner, where the normal accent is
+   only 4.06:1. The stronger accent clears AA at the button's small size. */
+.error-notice .btn--quiet {
+  color: var(--accent-strong);
+}
+
 .btn--danger {
   background: var(--danger);
   color: var(--danger-contrast);

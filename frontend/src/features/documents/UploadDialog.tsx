@@ -173,7 +173,10 @@ export function UploadDialog({
           type="button"
           className={mode === 'file' ? 'segmented__item is-active' : 'segmented__item'}
           aria-pressed={mode === 'file'}
-          onClick={() => setMode('file')}
+          onClick={() => {
+            setMode('file')
+            setError(null)
+          }}
           disabled={busy}
         >
           <Icon name="upload" size={15} /> Upload file
@@ -182,7 +185,10 @@ export function UploadDialog({
           type="button"
           className={mode === 'text' ? 'segmented__item is-active' : 'segmented__item'}
           aria-pressed={mode === 'text'}
-          onClick={() => setMode('text')}
+          onClick={() => {
+            setMode('text')
+            setError(null)
+          }}
           disabled={busy}
         >
           <Icon name="file" size={15} /> Paste text

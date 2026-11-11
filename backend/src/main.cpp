@@ -1,3 +1,5 @@
+#include <sys/stat.h>
+
 #include <exception>
 #include <iostream>
 
@@ -9,6 +11,11 @@
 
 int main(int argc, char** argv) {
     using namespace hnswhy;
+
+    // The server stores uploaded documents and embeddings. Make every file it
+    // creates owner-only by default (SQLite WAL/SHM, temporary PDFs, logs),
+    // not just the database file that DocumentStore chmods after opening.
+    ::umask(0077);
 
     try {
         const AppConfig config = load_config(argc, argv);

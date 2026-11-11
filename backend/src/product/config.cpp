@@ -88,6 +88,24 @@ std::string env_string(const char* name, std::string fallback = {}) {
     return value == nullptr ? std::move(fallback) : std::string(value);
 }
 
+std::vector<std::string> split_list(std::string_view value) {
+    std::vector<std::string> items;
+    std::size_t begin = 0;
+    while (begin <= value.size()) {
+        const std::size_t comma = value.find(',', begin);
+        const std::size_t end = comma == std::string_view::npos ? value.size() : comma;
+        std::string item = trim(std::string(value.substr(begin, end - begin)));
+        if (!item.empty()) {
+            items.push_back(std::move(item));
+        }
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        begin = comma + 1;
+    }
+    return items;
+}
+
 void apply_environment(AppConfig& config) {
     config.db_path = env_string("HNSWHY_DB", config.db_path.string());
     config.bench_report = env_string("HNSWHY_BENCH_REPORT", config.bench_report.string());
@@ -95,6 +113,9 @@ void apply_environment(AppConfig& config) {
     config.samples_dir = env_string("HNSWHY_SAMPLES_DIR", config.samples_dir.string());
     config.host = env_string("HNSWHY_HOST", config.host);
     config.port = static_cast<int>(env_long("HNSWHY_PORT", config.port, 1, 65535));
+    if (const char* allowed = env_value("HNSWHY_ALLOWED_HOSTS"); allowed != nullptr) {
+        config.allowed_hosts = split_list(allowed);
+    }
     config.load_sample = env_bool("HNSWHY_LOAD_SAMPLE", config.load_sample);
     config.reembed = env_bool("HNSWHY_REEMBED", config.reembed);
 
@@ -186,6 +207,8 @@ void apply_command_line(AppConfig& config, int argc, char** argv, bool& m0_expli
                 parse_long(flag, take_value(argc, argv, i, flag), 1, 65535));
         } else if (flag == "--host") {
             config.host = take_value(argc, argv, i, flag);
+        } else if (flag == "--allowed-host") {
+            config.allowed_hosts.push_back(take_value(argc, argv, i, flag));
         } else if (flag == "--bench-report") {
             config.bench_report = take_value(argc, argv, i, flag);
         } else if (flag == "--static-dir") {
@@ -289,6 +312,7 @@ Usage: hnswhy_server [options]
 
   --db PATH                 SQLite database (default data/hnswhy.db)
   --host HOST               bind host (default 127.0.0.1)
+  --allowed-host HOST       extra Host header name to accept (repeatable)
   --port N                  bind port (default 8080)
   --bench-report PATH       benchmark JSON (default docs/results/bench.json)
   --static-dir PATH         frontend build (default frontend/dist)
@@ -312,6 +336,7 @@ Usage: hnswhy_server [options]
   --default-k N             default retrieval count (default 5)
 
 API keys are read from the environment, never from command-line flags.
+Loopback Host names are always accepted; add other names with --allowed-host.
 See .env.example for the full list.
 )";
 }

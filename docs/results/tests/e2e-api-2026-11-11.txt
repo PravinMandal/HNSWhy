@@ -1,0 +1,28 @@
+[PASS] health reports ok
+[PASS] health has database/store/providers
+[PASS] status exposes index dimensions
+[PASS] documents list is seeded
+[PASS] document detail has text and chunks
+[PASS] ask returns an answer with sources
+[PASS] ask timings and models are present
+[PASS] map returns sampled points with vectors
+[PASS] benchmark report is available
+[PASS] benchmark report carries config and methods
+[PASS] JSON upload returns a new document
+[PASS] uploaded document is searchable
+[PASS] multipart markdown upload succeeds
+[PASS] multipart title is honoured
+[PASS] PDF upload extracts text
+[PASS] ask rejects non-JSON content type with 415
+[PASS] ask rejects invalid JSON with 400
+[PASS] upload rejects unsupported file type
+[PASS] upload rejects NUL bytes with 422
+[PASS] map rejects an invalid limit
+[PASS] missing document is 404
+[PASS] delete removes the uploaded document
+[PASS] deleted document is gone
+[PASS] delete of the multipart document succeeds
+[PASS] delete of the PDF document succeeds
+[PASS] second server on the same database is refused
+
+26 passed, 0 failed

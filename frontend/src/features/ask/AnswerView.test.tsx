@@ -62,6 +62,29 @@ describe('AnswerView', () => {
     await waitFor(() => expect(source).toHaveFocus())
   })
 
+  it('keeps focus on the expander while a long chunk toggles', async () => {
+    const user = userEvent.setup()
+    renderAnswer({
+      ...baseAnswer,
+      sources: [
+        baseAnswer.sources[0],
+        { ...baseAnswer.sources[1], text: 'Long search notes. '.repeat(30) },
+      ],
+    })
+
+    const expander = screen.getByRole('button', { name: 'Show full chunk' })
+    await user.click(expander)
+
+    expect(expander).toHaveFocus()
+    expect(expander).toHaveTextContent('Show less')
+    expect(expander).toHaveAttribute('aria-expanded', 'true')
+
+    await user.click(expander)
+    expect(expander).toHaveFocus()
+    expect(expander).toHaveTextContent('Show full chunk')
+    expect(expander).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('warns when an answer has no citation markers', () => {
     renderAnswer({ ...baseAnswer, answer: 'A fluent answer with no citation.' })
 

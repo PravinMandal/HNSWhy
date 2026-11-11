@@ -1,0 +1,29 @@
+
+> hnswhy-frontend@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v6.4.6 building for production...
+transforming...
+✓ 241 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                     1.02 kB │ gzip:   0.56 kB
+dist/assets/pca.worker-CXr6JK-o.js                                  1.88 kB
+dist/assets/jetbrains-mono-vietnamese-wght-normal-Bt-aOZkq.woff2    7.50 kB
+dist/assets/jetbrains-mono-greek-wght-normal-Bw9x6K1M.woff2         9.00 kB
+dist/assets/inter-vietnamese-wght-normal-CBcvBZtf.woff2            10.25 kB
+dist/assets/inter-greek-ext-wght-normal-DlzME5K_.woff2             11.23 kB
+dist/assets/fraunces-vietnamese-wght-normal-CnvboYUG.woff2         11.57 kB
+dist/assets/jetbrains-mono-cyrillic-wght-normal-D73BlboJ.woff2     12.11 kB
+dist/assets/jetbrains-mono-latin-ext-wght-normal-DBQx-q_a.woff2    15.20 kB
+dist/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2              18.75 kB
+dist/assets/inter-greek-wght-normal-CkhJZR-_.woff2                 19.00 kB
+dist/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2          25.96 kB
+dist/assets/fraunces-latin-ext-wght-normal-Ca2vKHc0.woff2          33.58 kB
+dist/assets/fraunces-latin-wght-normal-ukD16Tqj.woff2              36.62 kB
+dist/assets/jetbrains-mono-latin-wght-normal-B9CIFXIH.woff2        40.40 kB
+dist/assets/inter-latin-wght-normal-Dx4kXJAl.woff2                 48.26 kB
+dist/assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2             85.07 kB
+dist/assets/index-CC-8PFcU.css                                     63.65 kB │ gzip:  13.64 kB
+dist/assets/index-BnOtf62a.js                                     448.70 kB │ gzip: 138.24 kB
+✓ built in 958ms

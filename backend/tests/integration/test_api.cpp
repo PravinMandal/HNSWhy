@@ -61,6 +61,8 @@ public:
         return client;
     }
 
+    int port() const { return port_; }
+
 private:
     hnswhy::Application app_;
     httplib::Server server_;
@@ -308,4 +310,110 @@ HNSWHY_TEST(api_serves_the_benchmark_report_when_present) {
     CHECK_EQ(body["available"], true);
     CHECK_EQ(body["report"]["dataset"]["name"], std::string("sift100k"));
     CHECK(body["report"]["results"].is_array());
+}
+
+HNSWHY_TEST(api_rejects_foreign_hosts_and_cross_site_writes) {
+    TempPath db(".db");
+    TempDir dir;
+    ApiFixture fixture(api_config(db, dir));
+    httplib::Client client = fixture.client();
+    const std::string local_origin =
+        "http://127.0.0.1:" + std::to_string(fixture.port());
+
+    // DNS rebinding: the socket still lands on loopback, but Host names the
+    // attacker. A real browser request from the app uses 127.0.0.1 or
+    // localhost.
+    auto response = client.Get("/api/health", httplib::Headers{{"Host", "evil.example"}});
+    CHECK(response);
+    CHECK_EQ(response->status, 403);
+    CHECK_EQ(body_of(response)["error"]["code"], std::string("FORBIDDEN_HOST"));
+
+    response = client.Get("/api/health",
+                          httplib::Headers{{"Host", "localhost:" +
+                                                        std::to_string(fixture.port())}});
+    CHECK(response);
+    CHECK_EQ(response->status, 200);
+
+    // A cross-site page can still cause a state-changing request even when it
+    // cannot read the response, so the Origin and Fetch Metadata signals are
+    // checked before the route runs.
+    const std::string ask = json{{"question", ""}}.dump();
+    response = client.Post("/api/ask", httplib::Headers{{"Origin", "http://evil.example"}},
+                           ask, "application/json");
+    CHECK(response);
+    CHECK_EQ(response->status, 403);
+    CHECK_EQ(body_of(response)["error"]["code"], std::string("CROSS_SITE_REQUEST"));
+
+    response = client.Post("/api/ask",
+                           httplib::Headers{{"Sec-Fetch-Site", "cross-site"}}, ask,
+                           "application/json");
+    CHECK(response);
+    CHECK_EQ(response->status, 403);
+
+    response = client.Post("/api/ask",
+                           httplib::Headers{{"Sec-Fetch-Site", "same-site"}}, ask,
+                           "application/json");
+    CHECK(response);
+    CHECK_EQ(response->status, 403);
+
+    // A same-origin browser request reaches the route: the empty question is a
+    // 400 validation error, not the 403 from the pre-routing guard.
+    response = client.Post(
+        "/api/ask",
+        httplib::Headers{{"Origin", local_origin}, {"Sec-Fetch-Site", "same-origin"}},
+        ask, "application/json");
+    CHECK(response);
+    CHECK_EQ(response->status, 400);
+
+    // Non-browser clients (curl, the E2E harness) send neither header.
+    response = client.Post("/api/ask", ask, "application/json");
+    CHECK(response);
+    CHECK_EQ(response->status, 400);
+}
+
+HNSWHY_TEST(api_accepts_configured_extra_host_names) {
+    TempPath db(".db");
+    TempDir dir;
+    hnswhy::AppConfig config = api_config(db, dir);
+    config.allowed_hosts.push_back("hnswhy.test");
+    ApiFixture fixture(config);
+    httplib::Client client = fixture.client();
+
+    auto response = client.Get(
+        "/api/health",
+        httplib::Headers{{"Host", "hnswhy.test:" + std::to_string(fixture.port())}});
+    CHECK(response);
+    CHECK_EQ(response->status, 200);
+}
+
+HNSWHY_TEST(api_static_mount_does_not_serve_files_outside_the_root) {
+    TempPath db(".db");
+    TempDir dir;
+    hnswhy::AppConfig config = api_config(db, dir);
+    std::filesystem::create_directories(config.static_dir);
+    {
+        std::ofstream index(config.static_dir / "index.html");
+        index << "<!doctype html><title>HNSWhy</title>";
+    }
+    {
+        std::ofstream secret(dir.path() / "secret.txt");
+        secret << "outside-the-static-root";
+    }
+    ApiFixture fixture(config);
+    httplib::Client client = fixture.client();
+
+    auto response = client.Get("/index.html");
+    CHECK(response);
+    CHECK_EQ(response->status, 200);
+    CHECK(response->body.find("HNSWhy") != std::string::npos);
+
+    for (const std::string& path : {std::string("/../secret.txt"),
+                                    std::string("/%2e%2e/secret.txt"),
+                                    std::string("/..%2fsecret.txt")}) {
+        response = client.Get(path);
+        if (response) {
+            CHECK(response->status != 200 || response->body.find("outside-the-static-root") ==
+                                                  std::string::npos);
+        }
+    }
 }

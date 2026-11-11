@@ -192,7 +192,7 @@ public:
                                "OpenAI-compatible /embeddings returned a bad data array", 502);
         }
 
-        std::vector<std::pair<int, std::vector<float>>> ordered;
+        std::vector<std::pair<std::size_t, std::vector<float>>> ordered;
         ordered.reserve(texts.size());
         std::vector<bool> seen(texts.size(), false);
         for (std::size_t i = 0; i < parsed["data"].size(); ++i) {
@@ -203,21 +203,29 @@ public:
             }
             std::vector<float> embedding =
                 json_embedding(item["embedding"], "OpenAI-compatible /embeddings");
-            int index = static_cast<int>(i);
+            std::size_t index = i;
             if (item.contains("index")) {
                 if (!item["index"].is_number_integer()) {
                     throw ProductError("PROVIDER_ERROR",
                                        "OpenAI-compatible response has a non-integer index", 502);
                 }
-                index = item["index"].get<int>();
+                // Read as int64 and range-check before narrowing. get<int>()
+                // would throw nlohmann's own out_of_range and surface as a 500
+                // internal error for a malformed provider response.
+                const long long raw = item["index"].get<long long>();
+                if (raw < 0 || static_cast<unsigned long long>(raw) >= texts.size()) {
+                    throw ProductError(
+                        "PROVIDER_ERROR",
+                        "OpenAI-compatible response has a duplicate or out-of-range index", 502);
+                }
+                index = static_cast<std::size_t>(raw);
             }
-            if (index < 0 || static_cast<std::size_t>(index) >= texts.size() ||
-                seen[static_cast<std::size_t>(index)]) {
+            if (seen[index]) {
                 throw ProductError("PROVIDER_ERROR",
                                    "OpenAI-compatible response has a duplicate or out-of-range index",
                                    502);
             }
-            seen[static_cast<std::size_t>(index)] = true;
+            seen[index] = true;
             ordered.emplace_back(index, std::move(embedding));
         }
         std::sort(ordered.begin(), ordered.end(),

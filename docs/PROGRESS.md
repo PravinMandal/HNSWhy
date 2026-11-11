@@ -17,6 +17,7 @@
 | 6 | Frontend from scratch: Documents, Ask, Map (2D/3D), Benchmark | done |
 | 7 | Sample knowledge base, end-to-end tests, critics, docs, release | done |
 | 8 | Correctness hardening and automated API + browser E2E | done |
+| 9 | Final five-critic iteration: engine, tests, frontend, backend security, C++ | done |
 
 ## Environment (verified)
 
@@ -54,24 +55,39 @@
   PCA. It is a visualization of the embedding space, not a drawing of HNSW edges.
 - D29: the sample knowledge base has eight Markdown documents (16 chunks) and is
   seeded only into a fresh database with the offline hash embedder.
+- D30: one server process owns the database through an exclusive `flock` on
+  `<db>.lock`; a second opener is refused.
+- D31: a disconnected layer-0 graph scans exactly its unreachable live slots and
+  merges them into the graph walk instead of returning a truncated list.
+- D32: inputs are validated at the boundary (media type, numeric flags,
+  ground-truth cache stamps).
+- D33: an empty library answers with the grounded refusal without calling an
+  embedding or chat provider.
+- D34: document title, source, and text reject NUL bytes, which SQLite would
+  otherwise truncate silently.
+- D35: sample seeding is resumable, idempotent, and never runs over user data.
+- D36: stored answers are shape-validated before use; a malformed one is
+  discarded.
+- D37: overlapping refreshes are ordered newest-wins.
 
 ## Test and verification state
 
-- Release suite: **143/143 passed** with `HNSWHY_SIFTSMALL_DIR` set.
-- ASan/UBSan suite: **143/143 passed** after the final hardening pass; no
+- Release suite: **165/165 passed** with `HNSWHY_SIFTSMALL_DIR` set.
+- ASan/UBSan suite: **165/165 passed** after the final hardening pass; no
   sanitizer reports.
-- Frontend: `tsc --noEmit` clean; **55/55 Vitest tests in 15 files passed**;
+- Frontend: `tsc --noEmit` clean; **67/67 Vitest tests in 17 files passed**;
   `npm run build` succeeds.
-- API end-to-end: **25/25 checks passed** against a fresh database and the real
+- API end-to-end: **26/26 checks passed** against a fresh database and the real
   server binary. The suite covers read endpoints, ask, map, benchmark, JSON and
-  multipart uploads, PDF extraction, 400/404/415 paths, deletes, and the
+  multipart uploads, PDF extraction, 400/404/415/422 paths, deletes, and the
   single-writer lock.
 - Browser end-to-end: **16/16 checks passed** in headless Chromium against the
   built frontend. The suite covers Documents, Ask, Map, Benchmark, theme
   persistence, mobile layout and drawer, skip link, focus trapping, console and
   network errors, and asserts that the production stylesheet is applied.
-- Evidence and screenshots: `docs/results/e2e/`; raw run log:
-  `docs/results/e2e/run-2026-11-11.log`.
+- Evidence and screenshots: `docs/results/e2e/`; raw run logs:
+  `docs/results/tests/e2e-api-2026-11-11.txt` and
+  `docs/results/tests/e2e-browser-2026-11-11.txt`.
 - Siftsmall gate: R@1 0.99, R@10 0.997 with the default HNSW configuration.
 - Live smoke test on the sample library: ask with citations, 2D/3D map, and
   benchmark views are now covered by the automated browser suite instead of a
@@ -182,7 +198,53 @@ A full review pass found and fixed issues that the happy path did not expose:
 - **Test isolation.** The benchmark-report persistence test now releases the
   single-writer lock before opening the same database again.
 
-The new `scripts/e2e/run.sh` starts a fresh server, runs 25 API checks and 16
+The new `scripts/e2e/run.sh` starts a fresh server, runs 26 API checks and 16
 browser checks, writes screenshots, and stops the server. `ui-e2e.cjs` asserts
 that the production stylesheet is applied, so a missing CSS asset cannot pass
 as a working page.
+
+### Phase 9 — final critic iteration (done)
+Five independent critics reviewed the engine, the tests, the frontend, the
+backend API/database/security surface, and C++ readability/safety. All 36
+findings (HNSW: seven; tests: eight; frontend: eight; backend/security: seven;
+C++: six) were checked against the code, accepted, and fixed. The full report is
+`docs/reviews/final-iteration-2026-11-11.md`.
+
+The two P1 engine findings mattered most:
+
+- The connectivity cache was marked dirty after every insert, forcing a full
+  BFS on the next search. The dirty flag is now set only when reachability can
+  actually change. First search after an insert fell from **4.921 ms** to
+  **0.013 ms**.
+- A disconnected graph scanned every live vector on every query. The engine now
+  records exactly the live slots unreachable from `entry_` and merges only
+  those into the beam, deduplicated when upper-layer descent starts in another
+  component. The fallback now ran on **1 of 8,000** queries instead of all of
+  them, and duplicate-heavy N=100k search fell from **7.5×** brute force to
+  **1.50×**.
+
+The testing pass added coverage for seeding over user data, endpoint parsing,
+the newer-schema guard, both upload size limits, the map point cap, the
+chunk-overflow guard, the benchmark page states, and database permissions.
+
+The backend/security pass closed a DNS-rebinding hole (Host allowlist with
+`HNSWHY_ALLOWED_HOSTS` / `--allowed-host`), rejected cross-site state-changing
+requests via `Origin` and `Sec-Fetch-Site`, moved file creation under
+`umask(0077)` with a 0600 pre-created database, bounded PDF extraction, bounded
+the benchmark-report read against TOCTOU, and stopped marking a skipped sample
+seed as initialized. The C++ pass made insertion exception-safe by poisoning the
+graph until rebuild, seeded the layer-0 beam from both entry components when the
+graph is disconnected, fixed the fallback counter, batched `get_chunks`, and
+range-checked provider indices. New tests cover Host/Origin/static traversal,
+the seeding retry, concurrent ask-while-upload, 1,200-chunk lookups, and the
+invalid-insert path.
+
+Sanitizer and release suites are **165/165**, the frontend is **67/67 in 17
+files**, and the E2E suite is **26 API + 16 browser checks** on a fresh
+database. Raw output is in `docs/results/tests/`.
+
+One exploratory harness expectation (self-query exactness when the graph is
+reachable from `entry_`) still reports a mismatch at seed 100, but the
+pre-change engine reports the same seed, slot, and result. It assumes exactness
+that HNSW does not promise at `ef=50` with `M=4`; the documented `ef >= N`
+contract is tested by the fuzz harness and passes.
