@@ -109,6 +109,23 @@ HNSWHY_TEST(config_reads_environment_overrides) {
     CHECK_EQ(config.chunk_overlap_words, std::size_t{25});
 }
 
+HNSWHY_TEST(config_reads_allowed_hosts_from_environment_and_flags) {
+    const ScopedCleanEnvironment environment;
+    setenv("HNSWHY_ALLOWED_HOSTS", " first.test , second.test ,, ", 1);
+    hnswhy::AppConfig config = load_with({});
+    CHECK_EQ(config.allowed_hosts.size(), std::size_t{2});
+    CHECK_EQ(config.allowed_hosts[0], std::string("first.test"));
+    CHECK_EQ(config.allowed_hosts[1], std::string("second.test"));
+
+    // --allowed-host is repeatable and appends to whatever the environment
+    // supplied. Unset the environment first so this checks the flag alone.
+    unsetenv("HNSWHY_ALLOWED_HOSTS");
+    config = load_with({"--allowed-host", "proxy.test", "--allowed-host", "hnswhy.test"});
+    CHECK_EQ(config.allowed_hosts.size(), std::size_t{2});
+    CHECK_EQ(config.allowed_hosts[0], std::string("proxy.test"));
+    CHECK_EQ(config.allowed_hosts[1], std::string("hnswhy.test"));
+}
+
 HNSWHY_TEST(config_uses_openai_key_only_for_the_default_endpoint) {
     const ScopedCleanEnvironment environment;
     setenv("OPENAI_API_KEY", "sk-test-value", 1);

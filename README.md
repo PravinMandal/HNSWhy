@@ -232,7 +232,7 @@ fallback is required.
 ## Tests
 
 ```bash
-# Release suite (165 tests; the committed sift10k fixture always runs,
+# Release suite (166 tests; the committed sift10k fixture always runs,
 # siftsmall runs when the dataset is present)
 HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall" ./build/backend/hns_tests
 

@@ -806,7 +806,7 @@ URLs. Ollama is optional at runtime.
 The committed sift10k fixture gate always runs. Siftsmall integration tests skip
 unless `HNSWHY_SIFTSMALL_DIR` points at a local dataset. Release verification on this
 machine runs the same suite with `HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall"`:
-**165/165 pass**. The frontend suite is **67 tests in 17 files**.
+**166/166 pass**. The frontend suite is **67 tests in 17 files**.
 
 The `dev` preset enables ASan and UBSan. The full suite is sanitizer-clean.
 
@@ -853,7 +853,7 @@ measured separately. Do not mix them.
 | Persistence | SQLite source of truth; incremental insert; tombstones; rebuild on startup |
 | Engine | flat store, squared L2, brute force, HNSW insert/search/prune, mark-deleted |
 | Evidence | SIFT-100k, 10k queries, 3 passes per curve point, `bench.json`, README table |
-| Safety | 165 tests, two-cluster test, siftsmall recall gate, persistence test, ASan/UBSan, 26 API + 16 browser E2E checks |
+| Safety | 166 tests, two-cluster test, siftsmall recall gate, persistence test, ASan/UBSan, 26 API + 16 browser E2E checks |
 | Ops | documented local run, `.env.example`, sample KB, no auth |
 
 ### Stretch (after v1)

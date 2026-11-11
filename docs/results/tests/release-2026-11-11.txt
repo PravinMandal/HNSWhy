@@ -176,6 +176,8 @@
 [  OK  ] config_rejects_m0_smaller_than_m
 [ RUN  ] config_reads_environment_overrides
 [  OK  ] config_reads_environment_overrides
+[ RUN  ] config_reads_allowed_hosts_from_environment_and_flags
+[  OK  ] config_reads_allowed_hosts_from_environment_and_flags
 [ RUN  ] config_uses_openai_key_only_for_the_default_endpoint
 [  OK  ] config_uses_openai_key_only_for_the_default_endpoint
 [ RUN  ] document_store_insert_list_and_get
@@ -336,36 +338,36 @@
 [  OK  ] application_asks_while_an_upload_is_in_flight
 [ RUN  ] api_health_upload_ask_map_and_delete_flow
 [hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
-[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595343_15/web"; API-only mode
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2611703_15/web"; API-only mode
 [hnswhy] compacting 1 tombstones by rebuilding the index from SQLite
 [  OK  ] api_health_upload_ask_map_and_delete_flow
 [ RUN  ] api_validates_bad_requests_and_unknown_documents
 [hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
-[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595343_16/web"; API-only mode
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2611703_16/web"; API-only mode
 [  OK  ] api_validates_bad_requests_and_unknown_documents
 [ RUN  ] api_rejects_non_json_content_types
 [hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
-[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595343_17/web"; API-only mode
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2611703_17/web"; API-only mode
 [  OK  ] api_rejects_non_json_content_types
 [ RUN  ] api_accepts_multipart_uploads
 [hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
-[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595343_18/web"; API-only mode
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2611703_18/web"; API-only mode
 [  OK  ] api_accepts_multipart_uploads
 [ RUN  ] api_accepts_multipart_pdf_uploads
 [hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
-[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595343_19/web"; API-only mode
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2611703_19/web"; API-only mode
 [  OK  ] api_accepts_multipart_pdf_uploads
 [ RUN  ] api_serves_the_benchmark_report_when_present
 [hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
-[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595343_20/web"; API-only mode
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2611703_20/web"; API-only mode
 [  OK  ] api_serves_the_benchmark_report_when_present
 [ RUN  ] api_rejects_foreign_hosts_and_cross_site_writes
 [hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
-[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595343_21/web"; API-only mode
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2611703_21/web"; API-only mode
 [  OK  ] api_rejects_foreign_hosts_and_cross_site_writes
 [ RUN  ] api_accepts_configured_extra_host_names
 [hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
-[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2595343_22/web"; API-only mode
+[hnswhy] frontend build not found at "/tmp/hnswhy_dir_2611703_22/web"; API-only mode
 [  OK  ] api_accepts_configured_extra_host_names
 [ RUN  ] api_static_mount_does_not_serve_files_outside_the_root
 [hnswhy] ready: 0 documents, 0 live vectors, 0 dimensions
@@ -380,9 +382,9 @@
   siftsmall: tie-aware recall 1, id overlap 1, max |kth error| 0
 [  OK  ] siftsmall_bruteforce_matches_shipped_groundtruth
 [ RUN  ] siftsmall_hnsw_recall_and_invariants
-  siftsmall hnsw: build 1315.39 ms, R@1 0.99, R@10 0.997, p50 0.045579 ms, p95 0.062851 ms
+  siftsmall hnsw: build 1297.41 ms, R@1 0.99, R@10 0.997, p50 0.054698 ms, p95 0.080227 ms
 [  OK  ] siftsmall_hnsw_recall_and_invariants
 [ RUN  ] bench_report_writes_stable_json_schema
 [  OK  ] bench_report_writes_stable_json_schema
 
-165/165 tests passed
+166/166 tests passed

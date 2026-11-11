@@ -68,7 +68,9 @@ is bound to a LAN address or put behind a proxy.
 
 | # | Severity | Finding | Verdict | Resolution |
 |---|----------|---------|---------|------------|
-| 1 | P1 | The server accepted any `Host` header, so a DNS-rebinding page could reach the loopback API with the browser's own origin. | Accepted | A pre-routing handler rejects a missing `Host` with `400 MISSING_HOST` and any name outside the allowlist with `403 FORBIDDEN_HOST`. The allowlist always contains `localhost`, `127.0.0.1`, and `::1`, plus the concrete bind host and any `HNSWHY_ALLOWED_HOSTS` / repeatable `--allowed-host` names. Ports are ignored when comparing names. Binding to a wildcard address without extra names logs a startup warning. Covered by `api_rejects_foreign_hosts_and_cross_site_writes` and `api_accepts_configured_extra_host_names`. |
+| 1 | P1 | The server accepted any `Host` header, so a DNS-rebinding page could reach the loopback API with the browser's own origin. | Accepted | A pre-routing handler rejects a missing `Host` with `400 MISSING_HOST` and any name outside the allowlist with `403 FORBIDDEN_HOST`. The allowlist always contains `localhost`, `127.0.0.1`, and `::1`, plus the concrete bind host and any `HNSWHY_ALLOWED_HOSTS` / repeatable `--allowed-host` names. Ports are ignored when comparing names. Binding to a wildcard address without extra names logs a startup warning. Covered by `api_rejects_foreign_hosts_and_cross_site_writes`,
+`api_accepts_configured_extra_host_names`, and
+`config_reads_allowed_hosts_from_environment_and_flags`. |
 | 2 | P2 | State-changing requests had no origin check; a cross-site form or `fetch` could upload or delete documents on a reachable server. | Accepted | `POST`/`PUT`/`PATCH`/`DELETE` now reject a `Sec-Fetch-Site` that is neither `same-origin` nor `none`, and an `Origin` whose authority does not equal the request `Host`, with `403 CROSS_SITE_REQUEST`. The check is in the same pre-routing handler, so no route can forget it. Covered by the same test. |
 | 3 | P3 | SQLite created the database with the process umask before `DocumentStore` narrowed it, leaving a short window where the file was world-readable. | Accepted | `main` sets `umask(0077)` before any file is opened, and `DocumentStore` pre-creates the database with `O_CREAT | O_CLOEXEC` mode `0600` before taking the lock. WAL, SHM, temporary PDFs, and logs inherit the owner-only umask. The existing permission test still passes. |
 | 4 | P3 | When seeding was skipped because the active provider was not the offline hash embedder, `app_initialized` was still written, so the sample library never loaded after switching back to hash. | Accepted | Seeding now records `seeding_skipped`; the initialization marker is written only when seeding actually finished or was not needed. `application_retries_sample_seed_after_a_non_hash_start` starts with Ollama, asserts an empty library and no marker, reopens with hash, and asserts one seeded document. |
@@ -97,9 +99,9 @@ Full commands and raw output are stored in `docs/results/tests/`; the
 standalone harness sources and build commands are in
 `docs/results/tests/harnesses/`.
 
-- Release C++ suite: **165/165 passed** with
+- Release C++ suite: **166/166 passed** with
   `HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall"`.
-- ASan + UBSan suite (`build/dev`): **165/165 passed**, no sanitizer reports.
+- ASan + UBSan suite (`build/dev`): **166/166 passed**, no sanitizer reports.
 - CI preset (`build/ci`): configured, built, and passed `ctest`.
 - Frontend type-check: `tsc --noEmit` clean.
 - Frontend unit tests: **67/67 passed in 17 files**.
@@ -141,6 +143,6 @@ beam starts at a node chosen by upper-layer descent, and that configuration
 uses `M` as low as 4 and `efConstruction` as low as 4. Approximate search at
 `ef=50` is allowed to miss a neighbour on such a graph. The contract that does
 matter — exact results when `ef >= N` — is enforced by the fuzz harness and the
-165-test suite, and the shipped defaults (`M=16`, `efConstruction=200`) are
+166-test suite, and the shipped defaults (`M=16`, `efConstruction=200`) are
 covered by the siftsmall and sift10k recall gates. No engine change was made to
 satisfy the weaker harness assumption.

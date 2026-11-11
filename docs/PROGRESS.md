@@ -72,8 +72,8 @@
 
 ## Test and verification state
 
-- Release suite: **165/165 passed** with `HNSWHY_SIFTSMALL_DIR` set.
-- ASan/UBSan suite: **165/165 passed** after the final hardening pass; no
+- Release suite: **166/166 passed** with `HNSWHY_SIFTSMALL_DIR` set.
+- ASan/UBSan suite: **166/166 passed** after the final hardening pass; no
   sanitizer reports.
 - Frontend: `tsc --noEmit` clean; **67/67 Vitest tests in 17 files passed**;
   `npm run build` succeeds.
@@ -239,7 +239,7 @@ range-checked provider indices. New tests cover Host/Origin/static traversal,
 the seeding retry, concurrent ask-while-upload, 1,200-chunk lookups, and the
 invalid-insert path.
 
-Sanitizer and release suites are **165/165**, the frontend is **67/67 in 17
+Sanitizer and release suites are **166/166**, the frontend is **67/67 in 17
 files**, and the E2E suite is **26 API + 16 browser checks** on a fresh
 database. Raw output is in `docs/results/tests/`.
 
