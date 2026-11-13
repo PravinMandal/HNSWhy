@@ -388,20 +388,22 @@ tombstones. No physical graph compaction in v1.
 embed(question) -> normalize
   -> HNSW::search(q, k=5, ef=50)
   -> map slots to live chunks
-  -> if no live chunks: grounded "not found" (no LLM call)
-  -> prompt with numbered sources
-  -> Ollama generate
+  -> drop chunks below min_source_similarity (0 disables)
+  -> prompt with numbered sources, or a no-sources prompt
+  -> chat provider generate
   -> answer + citations + timings
-
-There is no hard distance cutoff in v1; a threshold is embedding-model dependent and
-uncalibrated. If the index has chunks, retrieve top-k and let the constrained prompt
-decide whether the sources answer the question. A refusal with sources is a valid
-grounded result.
 ```
 
-The answer is grounded in the retrieved chunks. If Ollama is down, return `503` with a
-fixable message. Do not answer from general knowledge and present it as document
-evidence.
+The similarity floor is opt-in and embedding-model dependent: `0.40` suits
+`nomic-embed-text`, while lexical hash embeddings need a much lower value. With no
+live chunks, or no chunk above the floor, retrieval is skipped but generation still
+runs with a no-sources prompt. A model may also decline to cite retrieved sources
+when they do not support the question.
+
+The retrieved chunks are additional context, not a gate. A cited answer is
+document-grounded; an uncited answer comes from the model's general knowledge and the
+UI labels it that way. If the chat provider is down, return `503` with a fixable
+message. Do not answer from general knowledge and present it as document evidence.
 
 ### 6.6 Map
 

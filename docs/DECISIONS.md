@@ -713,7 +713,7 @@ recomputation, which is the correct trade.
 
 ---
 
-## D33 — An empty library refuses without calling a provider
+## D33 — An empty library refuses without calling a provider (superseded by D47)
 
 **Decision.** `Application::ask` validates the question and `k` first, then returns
 `RagService::no_answer()` when the index has no live vectors. The embedding and chat
@@ -726,6 +726,9 @@ a provider round trip cannot change it, and a provider outage would otherwise tu
 **Consequences.** Validation still runs first, so a malformed question gets its 400 on
 an empty library. The refusal carries provider/model metadata like any other answer so
 the UI renders one shape. Tests assert zero provider calls and `total_ms == 0`.
+
+**Superseded by D47.** An empty library no longer refuses; the chat provider answers
+from general knowledge. The old tests now assert that the generation phase ran.
 
 ---
 
@@ -935,6 +938,33 @@ was never visited, even though it may hold the nearest neighbour.
 latency stay comparable. The two temporary harnesses (one-hot vectors and
 permuted components) pass on both old and new code, so this is a targeted guard
 without a fabricated regression test.
+
+---
+
+## D47 — RAG is additional context, with an explicit general-knowledge fallback
+
+**Decision.** The product always generates an answer. An empty library, zero search
+hits, and chunks below `HNSWHY_MIN_SOURCE_SIMILARITY` all skip retrieval but still call
+the chat provider with a no-sources prompt. With sources, the prompt requires a
+citation only when the source directly supports the sentence; otherwise the model
+answers from general knowledge without citations. `min_source_similarity` is a cosine
+floor in `[0, 1]`; `0` disables it. Uncited answers are returned to the UI, which labels
+them as general knowledge.
+
+**Why.** A retrieval product that refuses every question outside its corpus is a search
+box, not an assistant. The uploaded documents are additional context, not a gate. But
+citing an unrelated chunk to a general answer is worse than no citation, so weak
+retrievals are omitted rather than shown as evidence. Keeping the two states visibly
+distinct preserves the honesty property: document-grounded answers carry citations,
+and model knowledge is marked as such.
+
+**Consequences.** D33 is superseded. With an empty library the query is not embedded,
+so `query_vector` is empty, but the chat phase still runs and timings are populated.
+The default floor is `0.0` so the offline hash embedder keeps its existing rankings;
+`0.40` is a reasonable starting point for `nomic-embed-text`. Tests cover the empty
+library, keeping a source above the floor, dropping one below it, and the no-sources
+prompt. The offline extractive provider has no world knowledge, so it may still return
+`kNoAnswer`; that is a provider limitation, not an application gate.
 
 ---
 

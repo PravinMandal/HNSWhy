@@ -72,7 +72,8 @@ Application::Application(AppConfig config)
       embedder_(create_embedding_provider(config_.embedding)),
       chat_(create_chat_provider(config_.chat)),
       index_(config_.hnsw),
-      rag_(store_, index_, *embedder_, *chat_, config_.query_ef) {
+      rag_(store_, index_, *embedder_, *chat_, config_.query_ef,
+           config_.min_source_similarity) {
     if (config_.chunk_overlap_words >= config_.chunk_target_words) {
         throw ProductError("CONFIG_ERROR", "chunk overlap must be smaller than chunk words",
                            500);
@@ -328,27 +329,22 @@ RagAnswer Application::ask(std::string_view question, std::size_t k) {
     // 400 even when there is nothing to search.
     const std::string normalized = normalize_question(question);
     validate_k(k);
+
+    bool has_documents = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (index_.live() == 0) {
-            // Nothing is indexed, so a provider outage must not turn "no
-            // documents" into a 503, and there is no reason to pay embedding
-            // latency for a question that cannot match anything.
-            return rag_.no_answer();
-        }
+        has_documents = index_.live() > 0;
     }
 
-    // The embedding and chat providers may perform slow network calls. Only
-    // the retrieval step touches the index and store, so keep the mutex around
-    // that step alone: uploads and deletes stay responsive during generation.
-    const RagQuery query = rag_.embed_question(normalized);
+    // With an empty library there is nothing to embed the question against.
+    // Skip straight to the chat provider, which can still answer from general
+    // knowledge. With documents, embed outside the lock and search under it.
+    const RagQuery query = has_documents ? rag_.embed_question(normalized)
+                                         : rag_.prepare_question(normalized);
     RagAnswer answer;
-    {
+    if (has_documents) {
         std::lock_guard<std::mutex> lock(mutex_);
         answer = rag_.retrieve(query, k);
-        if (answer.sources.empty()) {
-            return answer;
-        }
     }
     return rag_.generate(query, std::move(answer));
 }

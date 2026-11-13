@@ -222,20 +222,22 @@ export function AnswerView({ answer, onOpenMap }: { answer: AskResponse; onOpenM
             </span>
             <div>
               <h2 id="answer-heading" tabIndex={-1}>
-                {refused ? 'No answer found' : cited ? 'Answer with citations' : 'Answer without citations'}
+                {refused ? 'No answer found' : cited ? 'Answer with citations' : 'Answer from general knowledge'}
               </h2>
               <span>
                 {refused
-                  ? 'The retrieved chunks did not support an answer.'
+                  ? 'The answer provider did not return an answer.'
                   : cited
                     ? `${pluralize(answer.sources.length, 'source')} retrieved · ${formatMs(answer.timings_ms.total)} total`
-                    : 'The model did not cite a source, so this text is not traceable to a chunk.'}
+                    : answer.sources.length > 0
+                      ? `${pluralize(answer.sources.length, 'source')} retrieved · general knowledge · ${formatMs(answer.timings_ms.total)} total`
+                      : `General knowledge · ${formatMs(answer.timings_ms.total)} total`}
               </span>
             </div>
           </div>
           <div className="answer__actions">
             <Badge tone={refused || !cited ? 'warn' : 'accent'} dot>
-              {refused ? 'refusal' : cited ? 'cited' : 'uncited'}
+              {refused ? 'refusal' : cited ? 'cited' : 'general'}
             </Badge>
             <Button variant="ghost" size="sm" onClick={() => void copyAnswer()} icon={<Icon name="copy" size={15} />}>
               Copy
@@ -246,14 +248,18 @@ export function AnswerView({ answer, onOpenMap }: { answer: AskResponse; onOpenM
         {refused ? (
           <div className="refusal">
             <p>{answer.answer}</p>
-            <span>Try a concept that appears in your documents, or upload a source that covers it.</span>
+            <span>
+              No retrieved chunk answered this question. Upload a source that covers it, or use
+              a chat model that can answer from general knowledge.
+            </span>
           </div>
         ) : (
           <>
             {!cited ? (
               <p className="answer-warning" role="note">
-                This answer contains no citation markers, so it cannot be traced back to the
-                retrieved chunks. Verify it against the sources below before relying on it.
+                {answer.sources.length > 0
+                  ? 'This answer did not use the retrieved chunks. It comes from the model’s general knowledge; verify important claims before relying on it.'
+                  : 'No document chunks matched this question. The answer comes from the model’s general knowledge; verify important claims before relying on it.'}
               </p>
             ) : null}
             <AnswerText text={answer.answer} sourceCount={answer.sources.length} onCitation={focusSource} />
@@ -281,7 +287,11 @@ export function AnswerView({ answer, onOpenMap }: { answer: AskResponse; onOpenM
           <div className="sources__head">
             <div>
               <h2 id="sources-heading">Retrieved chunks</h2>
-              <p>Numbered in the same order as the citations above.</p>
+              <p>
+                {cited
+                  ? 'Numbered in the same order as the citations above.'
+                  : 'Retrieved for context; this answer did not use them.'}
+              </p>
             </div>
             <Badge tone="neutral">{formatNumber(answer.sources.length)}</Badge>
           </div>
@@ -370,8 +380,10 @@ export function AnswerView({ answer, onOpenMap }: { answer: AskResponse; onOpenM
               <h3>About this answer</h3>
             </div>
             <p>
-              The answer is generated only from the retrieved chunks. Distances are squared L2
-              values in the active embedding space, so smaller is closer.
+              Answers use the retrieved chunks when they help and cite them. When the chunks do
+              not cover the question, the model answers from general knowledge; those answers
+              are marked as general knowledge. Distances are squared L2 values in the active
+              embedding space, so smaller is closer.
             </p>
           </div>
         </aside>

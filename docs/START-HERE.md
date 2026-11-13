@@ -19,8 +19,11 @@
 
 A user uploads a document. The app splits it into chunks, turns each chunk into a
 vector, stores the text and vectors, and lets the user ask a question. The app finds
-the chunks closest to the question and asks a local LLM to answer using only those
-chunks. The answer comes back with citations.
+the chunks closest to the question, drops the ones below the similarity floor, and
+asks a chat model to answer using those chunks as numbered sources. The answer comes
+back with citations when the sources support it. If they do not, the model answers
+from general knowledge and the UI marks that answer as uncited, so the two kinds of
+answer stay visibly distinct.
 
 Under that product is the part that makes the project worth defending: **you write the
 vector search engine yourself.** It has two ways to find nearest vectors:
@@ -60,8 +63,9 @@ Upload
 
 Ask
   question -> embedding -> HNSW search -> nearest chunks
-           -> prompt with numbered sources -> Ollama answer
-           -> answer + citations
+           -> drop chunks below the similarity floor
+           -> prompt with numbered sources -> chat model answer
+           -> cited answer, or uncited general-knowledge answer
 
 Restart
   SQLite is the source of truth -> reload chunks -> rebuild HNSW

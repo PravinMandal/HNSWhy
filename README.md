@@ -18,9 +18,9 @@ vector engine.
 ## What it is
 
 HNSWhy lets a user upload PDF, Markdown, or plain-text documents, ask questions,
-and get answers with citations. At its core is a from-scratch HNSW engine: a flat
-vector store, exact brute force, a layered proximity graph, tombstones, a real
-benchmark, and tests that exercise every layer.
+and get answers with citations when those documents support them. At its core is
+a from-scratch HNSW engine: a flat vector store, exact brute force, a layered
+proximity graph, tombstones, a real benchmark, and tests that exercise every layer.
 
 The point is not "another RAG wrapper" and not "another HNSW implementation." The
 point is the pair:
@@ -33,9 +33,12 @@ point is the pair:
 > **7,281** queries per second, while exact search did **200.9** QPS — a measured
 > **36.2×** throughput improvement at that recall.
 
-The query is embedded with the same provider as the corpus. The retrieved chunks are
-loaded from SQLite, passed to the chat provider as numbered sources, and returned with
-citations. A separate CLI measures the same engine library, so product latency and
+The query is embedded with the same provider as the corpus. Retrieved chunks are
+filtered by a configurable similarity floor, loaded from SQLite, and passed to the
+chat provider as numbered sources. The model cites the sources it actually uses.
+When no chunk is relevant enough, it answers from general knowledge instead, and the
+UI marks that answer as uncited, so document evidence and model knowledge are never
+conflated. A separate CLI measures the same engine library, so product latency and
 benchmark claims cannot drift apart.
 
 ---
@@ -86,7 +89,7 @@ When the code or benchmark changes, rerun `scripts/run_bench.sh` and replace
 | Section | What it does |
 |---|---|
 | **Documents** | Upload PDF/TXT/Markdown or paste text; inspect extracted chunks; delete. |
-| **Ask** | Grounded answers with numbered citations, retrieval scores, timings, and model metadata; the query vector feeds the Map overlay. |
+| **Ask** | Cited answers when sources support them, with numbered citations, retrieval scores, timings, and model metadata; otherwise an explicitly labeled general-knowledge answer. The query vector feeds the Map overlay. |
 | **Map** | Actual embedding-space visualization in 2D and 3D, with PCA metadata, document focus, point inspection, and retrieval highlights. |
 | **Benchmark** | Real SIFT-100k report: recall curve, latency percentiles, method table, exact comparison, config and environment. |
 
@@ -112,7 +115,7 @@ vectors.
 ```text
 React UI (Vite + TypeScript)
   ├── Documents      upload/paste, list, detail, delete
-  ├── Ask            question -> grounded answer + citations
+  ├── Ask            question -> cited answer, or uncited general answer
   ├── Map            2D/3D PCA of real chunk embeddings
   └── Benchmark      reads the frozen bench.json report
         │
@@ -123,7 +126,7 @@ C++ HTTP server (cpp-httplib)
   ├── product/store    SQLite: documents, chunks, embeddings, metadata
   ├── product/index    VectorStore + HNSW + slot/tombstone maps
   ├── product/providers hash, Ollama, OpenAI-compatible
-  └── product/rag      retrieval, grounded prompt, citations
+  └── product/rag      retrieval, similarity floor, prompt, citations
         │
         ▼
 hnswhy_engine (static library)
@@ -218,6 +221,12 @@ scripts/run_server.sh --reembed
 `--reembed` replaces existing vectors with the new embedding space. Omit it when the
 stored metadata already matches the configured provider.
 
+`HNSWHY_MIN_SOURCE_SIMILARITY` sets a cosine-similarity floor for retrieved chunks.
+Below it, chunks are omitted and the chat provider answers from general knowledge.
+`0` disables the filter; `0.40` works well with `nomic-embed-text`, while the lexical
+hash embedder needs a much lower floor. The answer is marked uncited whenever the
+model uses no sources.
+
 ---
 
 ## API
@@ -233,7 +242,7 @@ a JSON body. Errors use one shape: `{"error": {"code": "...", "message": "..."}}
 | `GET` | `/api/documents/{id}` | Document detail and chunks |
 | `POST` | `/api/documents` | Upload a file or paste text |
 | `DELETE` | `/api/documents/{id}` | Delete a document and tombstone its vectors |
-| `POST` | `/api/ask` | Answer a question with cited sources |
+| `POST` | `/api/ask` | Answer a question; cite retrieved sources when used |
 | `GET` | `/api/map` | Sampled chunk vectors for the embedding map |
 | `GET` | `/api/benchmark` | Frozen benchmark report or an unavailable message |
 
@@ -246,7 +255,7 @@ fallback is required.
 ## Tests
 
 ```bash
-# Release suite (166 tests; the committed sift10k fixture always runs,
+# Release suite (168 tests; the committed sift10k fixture always runs,
 # siftsmall runs when the dataset is present)
 HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall" ./build/backend/hns_tests
 
@@ -264,7 +273,8 @@ scripts/e2e/run.sh
 
 Coverage includes squared-L2 distance, `VectorStore` invariants, exact search,
 HNSW insertion orders, duplicate vectors, pruning, deletion/tombstones, restart
-persistence, chunking, provider behavior, RAG citations, the HTTP API (including
+persistence, chunking, provider behavior, RAG citations, the similarity floor and
+general-knowledge fallback, the HTTP API (including
 Host/Origin guards and static-path traversal), report schema, and real siftsmall
 recall. The frontend tests cover routing, the data provider,
 theme persistence, dialogs, formatting, PCA, and page behaviour. The end-to-end
@@ -314,6 +324,8 @@ benchmark during a request.
 - No auth. Run it locally or behind a trusted access gate. Host allowlisting and
   cross-site write rejection stop browser-driven misuse, not a direct client.
 - Uploaded text is trusted input; prompt-injection hardening is out of scope.
+- Uncited answers come from the model's general knowledge and are not verified by
+  HNSWhy. The UI labels them; it cannot make a small model factually reliable.
 - Benchmark numbers are local to the recorded machine, not cloud guarantees.
 
 ---

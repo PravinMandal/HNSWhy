@@ -31,6 +31,11 @@ struct AppConfig {
     HNSWParams hnsw;
 
     std::size_t query_ef = 50;
+    // Cosine-similarity floor for retrieved chunks. Below this, the chunks are
+    // treated as unrelated and the chat provider answers from general
+    // knowledge instead. 0 disables the filter; 0.40 suits nomic-embed-text,
+    // while lexical hash embeddings need a much lower floor.
+    double min_source_similarity = 0.0;
     std::size_t chunk_target_words = 350;
     std::size_t chunk_overlap_words = 50;
     std::size_t default_k = 5;

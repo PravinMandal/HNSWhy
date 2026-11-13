@@ -85,17 +85,15 @@ describe('AnswerView', () => {
     expect(expander).toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('warns when an answer has no citation markers', () => {
+  it('marks an uncited answer as general knowledge', () => {
     renderAnswer({ ...baseAnswer, answer: 'A fluent answer with no citation.' })
 
-    expect(screen.getByRole('heading', { name: 'Answer without citations' })).toBeInTheDocument()
-    expect(screen.getByText('uncited')).toBeInTheDocument()
-    expect(
-      screen.getByText(/cannot be traced back to the retrieved chunks/i),
-    ).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Answer from general knowledge' })).toBeInTheDocument()
+    expect(screen.getByText('general')).toBeInTheDocument()
+    expect(screen.getByText(/did not use the retrieved chunks/i)).toBeInTheDocument()
   })
 
-  it('labels the offline refusal and does not show the uncited warning', () => {
+  it('labels the offline refusal and does not show the general-knowledge warning', () => {
     renderAnswer({
       ...baseAnswer,
       answer: 'I could not find an answer to that question in the uploaded documents.',
@@ -103,7 +101,7 @@ describe('AnswerView', () => {
 
     expect(screen.getByRole('heading', { name: 'No answer found' })).toBeInTheDocument()
     expect(screen.getByText('refusal')).toBeInTheDocument()
-    expect(screen.queryByText(/cannot be traced back/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/did not use the retrieved chunks/i)).not.toBeInTheDocument()
   })
 
   it('does not turn index expressions inside code into citations', () => {

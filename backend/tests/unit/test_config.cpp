@@ -102,11 +102,13 @@ HNSWHY_TEST(config_reads_environment_overrides) {
     setenv("HNSWHY_HNSW_M", "24", 1);
     setenv("HNSWHY_CHUNK_WORDS", "400", 1);
     setenv("HNSWHY_CHUNK_OVERLAP", "25", 1);
+    setenv("HNSWHY_MIN_SOURCE_SIMILARITY", "0.55", 1);
     const hnswhy::AppConfig config = load_with({});
     CHECK_EQ(config.hnsw.M, std::size_t{24});
     CHECK_EQ(config.hnsw.M0, std::size_t{48});
     CHECK_EQ(config.chunk_target_words, std::size_t{400});
     CHECK_EQ(config.chunk_overlap_words, std::size_t{25});
+    CHECK(config.min_source_similarity > 0.549 && config.min_source_similarity < 0.551);
 }
 
 HNSWHY_TEST(config_reads_allowed_hosts_from_environment_and_flags) {

@@ -120,7 +120,8 @@ HNSWHY_TEST(rag_answers_with_sources_and_grounded_prompt) {
     CHECK_EQ(answer.embedding_model, std::string("local-hash-v1"));
     CHECK_EQ(answer.chat_provider, std::string("recording"));
 
-    CHECK(chat.last.system_prompt.find("only the numbered sources") != std::string::npos);
+    CHECK(chat.last.system_prompt.find("general knowledge") != std::string::npos);
+    CHECK(chat.last.system_prompt.find("source heading") != std::string::npos);
     CHECK(chat.last.user_prompt.find("Question: How does HNSW search work?") !=
           std::string::npos);
     CHECK(chat.last.user_prompt.find("[1] HNSW") != std::string::npos);
@@ -131,18 +132,63 @@ HNSWHY_TEST(rag_answers_with_sources_and_grounded_prompt) {
     CHECK(answer.timings.generate_ms >= 0.0);
 }
 
-HNSWHY_TEST(rag_refuses_without_documents_and_skips_chat) {
+HNSWHY_TEST(rag_keeps_relevant_sources_above_the_similarity_floor) {
+    TempPath db(".db");
+    hnswhy::DocumentStore store = make_store(db);
+    hnswhy::HashEmbeddingProvider embedder(256);
+    const std::string text =
+        "HNSW builds a layered proximity graph. Search descends through upper layers "
+        "before exploring a candidate list on layer zero.";
+    const auto embeddings = embedder.embed({text});
+    store.insert_document("HNSW", "handbook", text, {{text, embeddings[0]}});
+
+    hnswhy::VectorIndex index;
+    index.rebuild(index_vectors(store));
+    RecordingChat chat;
+    hnswhy::RagService rag(store, index, embedder, chat, 16, 0.10);
+
+    const hnswhy::RagAnswer answer = rag.ask("How does HNSW search work?", 2);
+    CHECK_EQ(answer.sources.size(), std::size_t{1});
+    CHECK_EQ(chat.calls, 1);
+}
+
+HNSWHY_TEST(rag_omits_unrelated_sources_below_the_similarity_floor) {
+    TempPath db(".db");
+    hnswhy::DocumentStore store = make_store(db);
+    hnswhy::HashEmbeddingProvider embedder(256);
+    const std::string text = "Tomatoes need full sun and regular watering in summer.";
+    const auto embeddings = embedder.embed({text});
+    store.insert_document("Gardening", "notes", text, {{text, embeddings[0]}});
+
+    hnswhy::VectorIndex index;
+    index.rebuild(index_vectors(store));
+    RecordingChat chat;
+    chat.response = "Quantum chromodynamics is the theory of the strong interaction.";
+    hnswhy::RagService rag(store, index, embedder, chat, 16, 0.40);
+
+    const hnswhy::RagAnswer answer = rag.ask("What is quantum chromodynamics?", 2);
+    CHECK(answer.sources.empty());
+    CHECK_EQ(chat.calls, 1);
+    CHECK(chat.last.user_prompt.find("No document chunks were retrieved") !=
+          std::string::npos);
+}
+
+HNSWHY_TEST(rag_answers_without_documents_from_general_knowledge) {
     TempPath db(".db");
     hnswhy::DocumentStore store = make_store(db);
     hnswhy::HashEmbeddingProvider embedder(256);
     hnswhy::VectorIndex index;
     RecordingChat chat;
+    chat.response = "Paris is the capital of France.";
     hnswhy::RagService rag(store, index, embedder, chat, 16);
 
-    const hnswhy::RagAnswer answer = rag.ask("What is HNSW?", 3);
-    CHECK_EQ(answer.answer, std::string(hnswhy::kNoAnswer));
+    const hnswhy::RagAnswer answer = rag.ask("What is the capital of France?", 3);
+    CHECK_EQ(answer.answer, std::string("Paris is the capital of France."));
     CHECK(answer.sources.empty());
-    CHECK_EQ(chat.calls, 0);
+    CHECK_EQ(chat.calls, 1);
+    CHECK(chat.last.user_prompt.find("No document chunks were retrieved") !=
+          std::string::npos);
+    CHECK(answer.query_vector.size() == std::size_t{256});
 }
 
 HNSWHY_TEST(rag_offline_pipeline_cites_retrieved_sentence) {

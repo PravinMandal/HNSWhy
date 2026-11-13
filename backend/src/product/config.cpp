@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <stdexcept>
@@ -61,6 +62,28 @@ long parse_long(std::string_view name, std::string_view value, long minimum, lon
 long env_long(const char* name, long fallback, long minimum, long maximum) {
     const char* value = env_value(name);
     return value == nullptr ? fallback : parse_long(name, value, minimum, maximum);
+}
+
+double parse_double(std::string_view name, std::string_view value, double minimum,
+                    double maximum) {
+    std::string text(value);
+    char* end = nullptr;
+    errno = 0;
+    const double parsed = std::strtod(text.c_str(), &end);
+    if (errno != 0 || end == text.c_str() || *end != '\0' || !std::isfinite(parsed) ||
+        parsed < minimum || parsed > maximum) {
+        throw ProductError("CONFIG_ERROR",
+                           std::string(name) + " must be between " +
+                               std::to_string(minimum) + " and " +
+                               std::to_string(maximum),
+                           500);
+    }
+    return parsed;
+}
+
+double env_double(const char* name, double fallback, double minimum, double maximum) {
+    const char* value = env_value(name);
+    return value == nullptr ? fallback : parse_double(name, value, minimum, maximum);
 }
 
 bool parse_bool(std::string_view name, std::string_view value) {
@@ -151,6 +174,8 @@ void apply_environment(AppConfig& config) {
         env_long("HNSWHY_HNSW_SEED", static_cast<long>(config.hnsw.seed), 0, 1000000000));
     config.query_ef = static_cast<std::size_t>(
         env_long("HNSWHY_QUERY_EF", static_cast<long>(config.query_ef), 1, 10000));
+    config.min_source_similarity = env_double("HNSWHY_MIN_SOURCE_SIMILARITY",
+                                              config.min_source_similarity, 0.0, 1.0);
     config.default_k = static_cast<std::size_t>(
         env_long("HNSWHY_DEFAULT_K", static_cast<long>(config.default_k), 1, 20));
     config.chunk_target_words = static_cast<std::size_t>(

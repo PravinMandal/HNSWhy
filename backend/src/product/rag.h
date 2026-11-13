@@ -64,16 +64,16 @@ class RagService {
 public:
     RagService(const DocumentStore& store, VectorIndex& index,
                const EmbeddingProvider& embedder, const ChatProvider& chat,
-               std::size_t ef_search = 50);
+               std::size_t ef_search = 50, double min_source_similarity = 0.0);
 
     // Convenience path for tests and single-threaded callers. Application uses
     // the three phases below so slow provider calls never hold the mutex.
     RagAnswer ask(std::string_view question, std::size_t k);
 
-    // A refusal that never calls the embedding or chat provider. Used when the
-    // library is empty: there is nothing to search, so a remote provider
-    // outage must not turn "no documents" into a 503.
-    RagAnswer no_answer() const;
+    // Phase 0 for an empty library: validate the question and start the
+    // timing without paying for an embedding call there is nothing to compare
+    // against. The chat provider can still answer from general knowledge.
+    RagQuery prepare_question(std::string_view question) const;
 
     // Phase 1: validate the question and call the embedding provider. Cheap to
     // run outside any lock.
@@ -93,6 +93,7 @@ private:
     const EmbeddingProvider& embedder_;
     const ChatProvider& chat_;
     std::size_t ef_search_;
+    double min_source_similarity_;
 };
 
 }  // namespace hnswhy

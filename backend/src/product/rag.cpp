@@ -24,20 +24,34 @@ std::string shorten(std::string_view text, std::size_t limit) {
 }
 
 std::string build_system_prompt() {
-    return "You are HNSWhy, a retrieval-augmented question answering assistant.\n"
-           "Answer the question using only the numbered sources supplied by the user.\n"
-           "Every factual claim must cite a source as [1], [2], and so on.\n"
-           "If the sources do not contain the answer, say exactly:\n\"" +
-           std::string(kNoAnswer) +
-           "\"\n"
-           "Do not use outside knowledge and do not invent citations.";
+    return "You are HNSWhy, a helpful question answering assistant.\n"
+           "You may receive numbered document sources. Use them when they are relevant, "
+           "and cite the sources you use as [1], [2], and so on.\n"
+           "A source heading is part of that source: a pronoun in the body may refer to "
+           "the subject in the heading.\n"
+           "If the sources do not answer the question, answer from your own general "
+           "knowledge. Do not cite a source you did not use, and never invent citations.\n"
+           "Only cite a source when that source directly supports the sentence. If you "
+           "answer from general knowledge, do not include any citation markers.\n"
+           "Do not claim that a source says something it does not.\n"
+           "Copy numbers, names, and dates exactly as they appear in a source; never "
+           "substitute a number from a different sentence.\n"
+           "Be concise: at most three sentences unless the question asks for detail, and "
+           "do not repeat source paragraphs verbatim.";
 }
 
 std::string build_user_prompt(std::string_view question,
                               const std::vector<RagSource>& sources) {
     std::string prompt = "Question: ";
     prompt += question;
-    prompt += "\n\nSources:\n";
+    prompt += "\n\n";
+    if (sources.empty()) {
+        prompt += "No document chunks were retrieved.\n\n"
+                  "Answer the question from general knowledge. Do not cite a source.";
+        return prompt;
+    }
+
+    prompt += "Sources:\n";
     for (std::size_t i = 0; i < sources.size(); ++i) {
         prompt += "[";
         prompt += std::to_string(i + 1);
@@ -47,7 +61,9 @@ std::string build_user_prompt(std::string_view question,
         prompt += shorten(sources[i].text, 1600);
         prompt += "\n\n";
     }
-    prompt += "Answer with citations. If the answer is not present, use the exact refusal sentence.";
+    prompt += "Answer the question. Cite the sources you use. If none of the sources mention "
+              "the question's subject, ignore them completely and answer from general "
+              "knowledge without citations.";
     return prompt;
 }
 
@@ -75,21 +91,27 @@ void validate_k(std::size_t k) {
 
 RagService::RagService(const DocumentStore& store, VectorIndex& index,
                        const EmbeddingProvider& embedder, const ChatProvider& chat,
-                       std::size_t ef_search)
-    : store_(store), index_(index), embedder_(embedder), chat_(chat), ef_search_(ef_search) {
+                       std::size_t ef_search, double min_source_similarity)
+    : store_(store),
+      index_(index),
+      embedder_(embedder),
+      chat_(chat),
+      ef_search_(ef_search),
+      min_source_similarity_(min_source_similarity) {
     if (ef_search_ == 0) {
         ef_search_ = 50;
     }
+    if (min_source_similarity_ < 0.0 || min_source_similarity_ > 1.0) {
+        throw ProductError("CONFIG_ERROR",
+                           "min_source_similarity must be between 0 and 1", 500);
+    }
 }
 
-RagAnswer RagService::no_answer() const {
-    RagAnswer answer;
-    answer.embedding_provider = embedder_.name();
-    answer.embedding_model = embedder_.model();
-    answer.chat_provider = chat_.name();
-    answer.chat_model = chat_.model();
-    answer.answer = kNoAnswer;
-    return answer;
+RagQuery RagService::prepare_question(std::string_view question) const {
+    RagQuery query;
+    query.question = normalize_question(question);
+    query.started_at = Clock::now();
+    return query;
 }
 
 RagQuery RagService::embed_question(std::string_view question) const {
@@ -124,7 +146,6 @@ RagAnswer RagService::retrieve(const RagQuery& query, std::size_t k) {
     answer.timings = query.timings;
 
     if (index_.live() == 0) {
-        answer.answer = kNoAnswer;
         answer.timings.total_ms = elapsed_ms(query.started_at);
         return answer;
     }
@@ -138,7 +159,6 @@ RagAnswer RagService::retrieve(const RagQuery& query, std::size_t k) {
     const std::vector<IndexHit> hits = index_.search(query.query_vector, k, ef_search_);
     answer.timings.search_ms = elapsed_ms(search_begin);
     if (hits.empty()) {
-        answer.answer = kNoAnswer;
         answer.timings.total_ms = elapsed_ms(query.started_at);
         return answer;
     }
@@ -157,6 +177,13 @@ RagAnswer RagService::retrieve(const RagQuery& query, std::size_t k) {
 
     answer.sources.reserve(hits.size());
     for (std::size_t i = 0; i < hits.size(); ++i) {
+        // Embeddings are normalized, so squared L2 maps to cosine similarity:
+        // d = 2 - 2*cos. A source below the floor is unrelated context and is
+        // better omitted than handed to a small model as a tempting citation.
+        const double similarity = 1.0 - static_cast<double>(hits[i].distance) / 2.0;
+        if (min_source_similarity_ > 0.0 && similarity < min_source_similarity_) {
+            continue;
+        }
         RagSource source;
         source.chunk_id = chunks[i].chunk_id;
         source.document_id = chunks[i].document_id;
@@ -171,8 +198,15 @@ RagAnswer RagService::retrieve(const RagQuery& query, std::size_t k) {
 }
 
 RagAnswer RagService::generate(const RagQuery& query, RagAnswer answer) const {
-    if (answer.sources.empty()) {
-        return answer;
+    answer.embedding_provider = embedder_.name();
+    answer.embedding_model = embedder_.model();
+    answer.chat_provider = chat_.name();
+    answer.chat_model = chat_.model();
+    if (answer.query_vector.empty()) {
+        answer.query_vector = query.query_vector;
+    }
+    if (answer.timings.total_ms == 0.0) {
+        answer.timings = query.timings;
     }
 
     ChatRequest request;
@@ -196,9 +230,6 @@ RagAnswer RagService::generate(const RagQuery& query, RagAnswer answer) const {
 RagAnswer RagService::ask(std::string_view question, std::size_t k) {
     const RagQuery query = embed_question(question);
     RagAnswer answer = retrieve(query, k);
-    if (answer.sources.empty()) {
-        return answer;
-    }
     return generate(query, std::move(answer));
 }
 

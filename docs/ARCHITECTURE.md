@@ -19,9 +19,11 @@ each chunk with the configured provider, stores the text and vectors in SQLite, 
 inserts the vectors into a from-scratch HNSW index. The default provider is an offline
 deterministic hash embedder; Ollama and OpenAI-compatible endpoints are alternatives.
 When the user asks a question, the backend embeds the question, retrieves the nearest
-chunks with HNSW, and asks the configured chat provider to answer using only those
-chunks. The answer comes back with citations. A separate CLI measures the same engine
-on SIFT-100k and writes `bench.json`; the UI's Benchmark tab reads that file.
+chunks with HNSW, drops those below the similarity floor, and asks the configured chat
+provider to answer with the rest as numbered sources. The answer comes back with
+citations when those sources support it, or as a clearly labelled general-knowledge
+answer when they do not. A separate CLI measures the same engine on SIFT-100k and
+writes `bench.json`; the UI's Benchmark tab reads that file.
 
 The product is the demo. The engine is the depth. The benchmark is the evidence.
 
@@ -111,7 +113,7 @@ keeps the four sections linkable without a server-side router.
 | `frontend/src/api/client.ts` | typed HTTP client, upload progress, error normalization |
 | `frontend/src/api/types.ts` | response types shared by the four features |
 | `frontend/src/features/documents/` | upload/paste, list, search, detail, delete |
-| `frontend/src/features/ask/` | question composer, grounded answer, citations, timings |
+| `frontend/src/features/ask/` | question composer, cited answers, general-knowledge fallback, citations, timings |
 | `frontend/src/features/map/` | 2D/3D map, focus, query overlay, inspector, projection hook |
 | `frontend/src/features/benchmark/` | real report, recall chart, method table, latency, config |
 | `frontend/src/lib/pca.ts`, `pca.worker.ts` | NIPALS PCA in a Web Worker with a synchronous fallback |
@@ -174,17 +176,21 @@ question
   -> normalize
   -> hnsw.search(query, k=5, ef=50)
   -> map slots to chunks
-  -> build prompt with numbered sources
+  -> drop chunks below min_source_similarity
+  -> build prompt with numbered sources (or a no-sources instruction)
   -> chat provider generate(prompt)
   -> answer + citations + retrieved chunks + query vector + timings
 ```
 
-If the index has no live chunks, return a clear "I could not find this in the uploaded
-documents" response without calling the LLM. If the index has chunks, the constrained
-prompt decides whether the sources answer; a refusal is returned with its sources, not
-replaced by general knowledge. If a configured provider is down, return a `503` with a
-fixable message. Never invent an answer from general knowledge and present it as
-document-grounded.
+Retrieval is additional context, not a gate. When the index is empty, the question
+skips embedding and search but still goes to the chat provider with a no-sources
+prompt. When chunks are found, any chunk below the cosine floor is omitted; the rest
+become numbered sources. The system prompt tells the model to cite a source only when
+that source directly supports the sentence, and to answer from general knowledge,
+without citations, otherwise. The backend does not rewrite or reject model text; the
+frontend labels an uncited answer as general knowledge. A provider failure returns a
+`503` with a fixable message. The product never presents uncited model knowledge as
+document evidence.
 
 ### 3.4 Engine library (`hnswhy_engine`)
 
@@ -488,20 +494,24 @@ The full algorithm contract is `HNSW-SPEC.md`.
 ### 6.2 Ask
 
 1. User asks a question.
-2. Backend embeds and normalizes it.
+2. Backend embeds and normalizes it, unless the library is empty.
 3. `HNSW::search(question, k=5, ef=50)` returns slots.
 4. Backend maps slots to live chunks.
-5. If the index has no live chunks, return a grounded "not found" response without
-   calling the LLM.
-6. Build a prompt with numbered sources and an instruction to answer only from them.
-7. `OllamaClient::generate` returns the answer.
-8. If the model refuses because the sources do not answer the question, return that
-   refusal with the sources; do not substitute general knowledge.
-9. Backend returns `{ answer, sources, retrieved, timings }`.
-10. UI renders the answer with clickable citations.
+5. Chunks below `min_source_similarity` (cosine) are omitted. With no live chunks or
+   no chunk above the floor, the request still proceeds to generation with a
+   no-sources prompt.
+6. Build a prompt with the remaining numbered sources and instructions to cite only
+   the sources that directly support the answer, otherwise answer from general
+   knowledge without citations.
+7. The configured chat provider returns the answer.
+8. Backend returns `{ answer, sources, retrieved, timings }`.
+9. UI renders clickable citations when present, or an explicit general-knowledge
+   warning when the answer is uncited.
 
 The answer is not trusted just because it is fluent. The citations are the product's
 honesty mechanism: a user can open the chunk that supposedly supports the sentence.
+When there are no citations, the UI says the answer came from the model's general
+knowledge and should be verified; it never presents that answer as document-grounded.
 
 ### 6.3 Map
 
@@ -678,8 +688,9 @@ Failure behavior:
 | Benchmark file missing | Benchmark tab shows instructions, not a fake chart |
 | Embedding dimension mismatch | reject the document with a clear error |
 | Empty question | `400` with a validation message |
-| Empty index | grounded "not found" response; no LLM call |
-| Model refuses from sources | return the refusal with sources; no fallback answer |
+| Empty index | no retrieval; chat provider answers from general knowledge, marked uncited |
+| Sources below the similarity floor | omit them; chat provider answers from general knowledge, marked uncited |
+| Uncited model answer | returned with its sources; UI labels it general knowledge |
 
 The server must not crash on a bad request, a missing file, or a model error. Those
 are normal product states.
@@ -792,7 +803,7 @@ URLs. Ollama is optional at runtime.
 | `test_document_store` | schema, transactions, cascade deletes, metadata, sampling, batched chunk lookup |
 | `test_providers` | hash, extractive, Ollama/OpenAI request and error paths, index range checks |
 | `test_vector_index` | slot mapping, incremental insert, tombstone delete, rebuild |
-| `test_rag` | retrieval, grounded prompt, citations, refusal |
+| `test_rag` | retrieval, similarity floor, citation-first prompt, citations, general-knowledge fallback |
 | `test_persistence` | insert -> restart -> rebuild -> same results; sample seeded once; skipped seed retried; concurrent ask/upload |
 | `test_api` | upload/ask/map/delete flow, multipart, PDF, 415 validation, Host/Origin guards, static traversal, errors |
 | `test_bench` | fvecs/ivecs parsing, report schema |
@@ -806,7 +817,7 @@ URLs. Ollama is optional at runtime.
 The committed sift10k fixture gate always runs. Siftsmall integration tests skip
 unless `HNSWHY_SIFTSMALL_DIR` points at a local dataset. Release verification on this
 machine runs the same suite with `HNSWHY_SIFTSMALL_DIR="$PWD/data/siftsmall"`:
-**166/166 pass**. The frontend suite is **67 tests in 17 files**.
+**168/168 pass**. The frontend suite is **67 tests in 17 files**.
 
 The `dev` preset enables ASan and UBSan. The full suite is sanitizer-clean.
 
@@ -853,7 +864,7 @@ measured separately. Do not mix them.
 | Persistence | SQLite source of truth; incremental insert; tombstones; rebuild on startup |
 | Engine | flat store, squared L2, brute force, HNSW insert/search/prune, mark-deleted |
 | Evidence | SIFT-100k, 10k queries, 3 passes per curve point, `bench.json`, README table |
-| Safety | 166 tests, two-cluster test, siftsmall recall gate, persistence test, ASan/UBSan, 26 API + 16 browser E2E checks |
+| Safety | 168 tests, two-cluster test, siftsmall recall gate, persistence test, ASan/UBSan, 26 API + 16 browser E2E checks |
 | Ops | documented local run, `.env.example`, sample KB, no auth |
 
 ### Stretch (after v1)

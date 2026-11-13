@@ -18,6 +18,7 @@
 | 7 | Sample knowledge base, end-to-end tests, critics, docs, release | done |
 | 8 | Correctness hardening and automated API + browser E2E | done |
 | 9 | Final five-critic iteration: engine, tests, frontend, backend security, C++ | done |
+| 10 | Live embedding/chat providers and general-knowledge answer path | done |
 
 ## Environment (verified)
 
@@ -25,8 +26,10 @@
 - SQLite 3.54.0 with development headers
 - Node 26.13.0 / npm 11.20.0
 - `pdftotext` available (PDF extraction)
-- Ollama is not installed; offline providers are the default and Ollama paths are
-  configurable and covered by provider tests
+- Ollama 0.40.7 with `nomic-embed-text` (768 dimensions) for live embedding
+  verification; the offline providers remain the zero-dependency default
+- A local OpenAI-compatible chat endpoint is used for live answer verification;
+  the answer path is provider-agnostic
 - SIFT and siftsmall datasets under `data/`
 - CPU: 12th Gen Intel Core i5-12450H, 12 hardware threads
 
@@ -61,19 +64,22 @@
   merges them into the graph walk instead of returning a truncated list.
 - D32: inputs are validated at the boundary (media type, numeric flags,
   ground-truth cache stamps).
-- D33: an empty library answers with the grounded refusal without calling an
-  embedding or chat provider.
+- D33: an empty library answered with the grounded refusal without calling a
+  provider. Superseded by D47.
 - D34: document title, source, and text reject NUL bytes, which SQLite would
   otherwise truncate silently.
 - D35: sample seeding is resumable, idempotent, and never runs over user data.
 - D36: stored answers are shape-validated before use; a malformed one is
   discarded.
 - D37: overlapping refreshes are ordered newest-wins.
+- D47: RAG is additional context. The chat provider always answers; unrelated
+  chunks are dropped by a configurable cosine floor and uncited answers are
+  labelled general knowledge.
 
 ## Test and verification state
 
-- Release suite: **166/166 passed** with `HNSWHY_SIFTSMALL_DIR` set.
-- ASan/UBSan suite: **166/166 passed** after the final hardening pass; no
+- Release suite: **168/168 passed** with `HNSWHY_SIFTSMALL_DIR` set.
+- ASan/UBSan suite: **168/168 passed** after the answer-path change; no
   sanitizer reports.
 - Frontend: `tsc --noEmit` clean; **67/67 Vitest tests in 17 files passed**;
   `npm run build` succeeds.
@@ -239,7 +245,7 @@ range-checked provider indices. New tests cover Host/Origin/static traversal,
 the seeding retry, concurrent ask-while-upload, 1,200-chunk lookups, and the
 invalid-insert path.
 
-Sanitizer and release suites are **166/166**, the frontend is **67/67 in 17
+Sanitizer and release suites are **168/168**, the frontend is **67/67 in 17
 files**, and the E2E suite is **26 API + 16 browser checks** on a fresh
 database. Raw output is in `docs/results/tests/`.
 
@@ -248,3 +254,32 @@ reachable from `entry_`) still reports a mismatch at seed 100, but the
 pre-change engine reports the same seed, slot, and result. It assumes exactness
 that HNSW does not promise at `ef=50` with `M=4`; the documented `ef >= N`
 contract is tested by the fuzz harness and passes.
+
+## Phase 10 — RAG is context, not a gate
+
+Live verification exposed two product bugs that the offline providers could
+not: a grounded-only prompt refused questions the corpus did not cover, and a
+stored chunk whose body says "he" while its title names the subject was
+refused even though retrieval found it. The prompt now treats a source heading
+as part of the source, cites only sources that directly support a sentence,
+and falls back to general knowledge without citations when none do.
+
+The answer path no longer short-circuits to `kNoAnswer` for an empty library or
+empty retrieval. `Application::ask` skips embedding and search when the library
+is empty, then calls the chat provider with a no-sources prompt. `RagService`
+drops retrieved chunks below `HNSWHY_MIN_SOURCE_SIMILARITY` (cosine; `0`
+disables, `0.40` fits `nomic-embed-text`) so a small model is not tempted to
+cite an unrelated chunk. The frontend labels an uncited answer "Answer from
+general knowledge", keeps the retrieved sources visible for inspection, and
+does not claim they support the answer.
+
+Verified against a live stack at `http://127.0.0.1:8080` with Ollama
+`nomic-embed-text` (768d) and an OpenAI-compatible local chat model:
+
+- corpus question -> cited answer with the matching chunk;
+- out-of-corpus question -> correct general answer, zero sources, no citation;
+- benchmark question -> exact number copied from the cited chunk.
+
+The offline extractive provider still returns `kNoAnswer` when it has nothing
+to quote; it has no world knowledge. That is now a provider limitation, not an
+application gate. Tests: 168/168 release and ASan/UBSan; frontend 67/67.
